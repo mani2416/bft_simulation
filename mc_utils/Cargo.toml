@@ -1,0 +1,16 @@
+[package]
+name = "mc_utils"
+version = "0.4.12"
+authors = ["Martin Nischwitz <martin.nischwitz@ptb.de>", "Jan Wetzlich <jan.wetzlich@ptb.de>"]
+edition = "2018"
+
+[dependencies]
+simplelog = "^0.5"
+log = "^0.4"
+chrono = "0.4.6"
+glob = "^0.2.11"
+tini = { git = "https://github.com/pinecrew/tini" }
+base64 = "^0.10"
+serde = "^1.0"
+encoding = "^0.2.33"
+openssl = "^0.10"
