@@ -12,6 +12,7 @@ pub mod time;
 pub mod config;
 pub mod network;
 pub mod simulation;
+pub mod pbft;
 
 #[cfg(test)]
 mod tests {
