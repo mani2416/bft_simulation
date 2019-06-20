@@ -2,15 +2,22 @@
 Everything related to events.
 ***************************************************************************************************/
 
-use crate::pbft::messages::PBFTMessage;
-use crate::time::Time;
 use std::cmp::Ordering;
 
+use crate::node::pbft::messages::PBFTMessage;
+use crate::simulation::config::RequestBatchConfig;
+use crate::simulation::time::Time;
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum AdminType {
+    ClientRequests(RequestBatchConfig),
+    Stop,
+}
 
 /// The types of events that can happen in the simulation.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum EventType {
-    Admin,
+    Admin(AdminType),
     Network,
     Broadcast(Broadcast),
     Reception(Reception),
@@ -25,15 +32,29 @@ pub struct Event {
 
 impl Event {
     fn new(event_type: EventType, time: Time) -> Self {
-        Event {
-            event_type,
-            time: time,
-        }
+        Event { event_type, time }
     }
 
     /// To generate a new admin event
-    pub fn new_admin() -> Self {
-        Event::new(EventType::Admin, Time::new(0))
+    pub fn new_admin_stop() -> Self {
+        Event::new(EventType::Admin(AdminType::Stop), Time::new(0))
+    }
+
+    // Generate a batch of requests
+    pub fn new_admin_requests(number: u32, interval: u32) -> Self {
+        Event::new(
+            EventType::Admin(AdminType::ClientRequests(RequestBatchConfig::new(
+                number, interval,
+            ))),
+            Time::new(0),
+        )
+    }
+
+    pub fn new_admin_requests_from_config(config: RequestBatchConfig) -> Self {
+        Event::new(
+            EventType::Admin(AdminType::ClientRequests(config)),
+            Time::new(0),
+        )
     }
 
     /// To generate a new broadcast event
@@ -54,11 +75,8 @@ impl Event {
 impl Ord for Event {
     fn cmp(&self, other: &Self) -> Ordering {
         match self.event_type {
-            EventType::Admin => Ordering::Greater,
-            _ => {
-                let result = self.time.cmp(&other.time);
-                result
-            }
+            EventType::Admin(_) => Ordering::Greater,
+            _ => self.time.cmp(&other.time),
         }
     }
 }

@@ -1,3 +1,5 @@
+//! Some convenience functions to read and write files
+
 extern crate glob;
 extern crate log;
 

@@ -1,7 +1,10 @@
-use super::messages::*;
-use log::{debug, warn};
 use std::collections::HashSet;
 
+use log::{debug, warn};
+
+use crate::simulation::config::log_result;
+
+use super::messages::*;
 
 /// The output produced by this module. Consumed by the host running the `ReplicaState`.
 type Output = Option<Vec<(u32, PBFTMessage)>>;
@@ -25,7 +28,7 @@ pub enum ReplicaRole {
 //       Therefore, improve the way of storing messages!!
 
 /// The type defining an entry of the replica's log. An entry stores the request
-/// and all related informations required by the protocol.
+/// and all related information required by the protocol.
 ///
 /// Thus, holds the `view` and `seq_number` assigned by the primary for the client request
 /// as well as all associated messages like the original _client request_ and
@@ -77,7 +80,7 @@ pub struct ReplicaState {
     current_view: u64,
     /// Used only by the `primary` to assign the next sequence number.
     next_seq_num: u64,
-    /// The index of the last commited entry in the `log`.
+    /// The index of the last committed entry in the `log`.
     last_commited_index: usize,
     /// Specifies the current role of the replica in the cluster.
     role: ReplicaRole,
@@ -92,7 +95,7 @@ impl ReplicaState {
     /// the (fixed) primary is always the node with id `1`.
     ///
     /// Requires the parameter `num_of_nodes` to be at least `4`, otherwise it
-    /// `panics!` since at least 4 nodes are required for successfull operation.
+    /// `panics!` since at least 4 nodes are required for successful operation.
     pub fn new(id: u32, num_of_nodes: u32) -> Self {
         if num_of_nodes < 4 {
             panic!("Need at least 4 PBFT nodes but got only {}", num_of_nodes);
@@ -162,7 +165,6 @@ impl ReplicaState {
     /// Handles incoming client requests.
     fn handle_client_request(&mut self, msg_in: ClientRequest) -> Output {
         if self.is_primary() {
-
             // TODO: needs more validations before processing
 
             let seq_number = self.next_seq_num();
@@ -181,18 +183,15 @@ impl ReplicaState {
             self.log.push(entry);
 
             return self.create_peer_broadcast_output(PBFTMessage::PrePrepare(preprepare));
-
         } else {
             warn!(target: "node", "Non-primary PBFTNode {} received a client request", self.id);
         }
         None
     }
 
-
     fn handle_pre_prepare_message(&mut self, msg_in: PrePrepareMessage) -> Output {
         // TODO: needs validations before processing
         if self.curr_primary() == msg_in.sender_id {
-
             let mut entry = LogEntry::new(msg_in.view, msg_in.seq_number, msg_in.c_req);
 
             let prepare = PrepareMessage {
@@ -218,9 +217,9 @@ impl ReplicaState {
         None
     }
 
-
     fn handle_prepare_message(&mut self, message: PrepareMessage) -> Output {
         // TODO: we assume seq_number - 1 == index. Eventually, won't work anymore. Therefore, FIX!
+        // correct, when we add delays or message omissions the messages will arrive out of order and uninitialized indices might be called
         let entry = &mut self.log[(message.seq_number - 1) as usize];
 
         // TODO: needs validations before processing
@@ -231,6 +230,8 @@ impl ReplicaState {
 
         if !entry.prepared && entry.prepare_quorum.len() >= (2 * self.f + 1) as usize {
             debug!(target:"node", "PBFTNode {} successfully prepared for seq_number {}", self.id, message.seq_number);
+            // TODO make an entry for the result logger. The state still needs to be given the time of the reception event, so you can log it here.
+            // Call should be something like this: debug!(create_log_result_message(<time>, Some(self.id), "prepared")); // or "prepare quorum completed"
             entry.prepared = true;
 
             let commit = CommitMessage {

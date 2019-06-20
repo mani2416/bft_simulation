@@ -11,8 +11,6 @@ use openssl::pkey::Public;
 use openssl::sign::Signer;
 use openssl::sign::Verifier;
 
-
-
 /// sign data1 and optional data2 with key in Pkcs12-Format
 pub fn sign(data1: &[u8], data2: Option<&[u8]>, key: &[u8], digest: MessageDigest) -> Vec<u8> {
     // todo testing
@@ -35,7 +33,13 @@ pub fn sign(data1: &[u8], data2: Option<&[u8]>, key: &[u8], digest: MessageDiges
 }
 
 /// if signature 'sig' on data1 and optional data to is valid for pubkey
-pub fn valid_sig(data1: &[u8], data2: Option<&[u8]>, sig: &[u8], pubkey: &PKey<Public>, digest: MessageDigest) -> bool {
+pub fn valid_sig(
+    data1: &[u8],
+    data2: Option<&[u8]>,
+    sig: &[u8],
+    pubkey: &PKey<Public>,
+    digest: MessageDigest,
+) -> bool {
     // todo testing
 
     //prof sig over hash
