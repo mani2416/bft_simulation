@@ -231,7 +231,7 @@ impl ReplicaState {
         if !entry.prepared && entry.prepare_quorum.len() >= (2 * self.f + 1) as usize {
             debug!(target:"node", "PBFTNode {} successfully prepared for seq_number {}", self.id, message.seq_number);
             // TODO make an entry for the result logger. The state still needs to be given the time of the reception event, so you can log it here.
-            // Call should be something like this: debug!(create_log_result_message(<time>, Some(self.id), "prepared")); // or "prepare quorum completed"
+            // Call should be something like this: log_result(<time>, Some(self.id), "prepared"); // or "prepare quorum completed"
             entry.prepared = true;
 
             let commit = CommitMessage {
