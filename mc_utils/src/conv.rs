@@ -4,11 +4,13 @@ extern crate base64;
 extern crate encoding;
 use serde::{Deserialize, Deserializer, Serializer};
 
-
 /// Serializes `buffer` to a base64-string. Only usefull with serde.
 /// can be applied to structs by:
 /// #[serde(serialize_with = "vec_u8_to_str", deserialize_with = "str_to_vec_u8")]
-#[deprecated(since = "0.4.9", note = "use mc_utils::conv::ser_vec_u8_to_str instead for clearer naming")]
+#[deprecated(
+    since = "0.4.9",
+    note = "use mc_utils::conv::ser_vec_u8_to_str instead for clearer naming"
+)]
 pub fn vec_u8_to_str<T, S>(buffer: &T, serializer: S) -> Result<S::Ok, S::Error>
 where
     T: AsRef<[u8]>,
@@ -30,7 +32,10 @@ where
 /// Deserializes a string formatted in base64 to a `Vec<u8>`. Only usefull with serde.
 /// can be applied to structs by:
 /// #[serde(serialize_with = "vec_u8_to_str", deserialize_with = "str_to_vec_u8")]
-#[deprecated(since = "0.4.9", note = "use mc_utils::conv::de_str_to_vec_u8 instead for clearer naming")]
+#[deprecated(
+    since = "0.4.9",
+    note = "use mc_utils::conv::de_str_to_vec_u8 instead for clearer naming"
+)]
 pub fn str_to_vec_u8<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
 where
     D: Deserializer<'de>,
@@ -53,11 +58,13 @@ where
         })
 }
 
-use encoding::{Encoding, DecoderTrap};
 use encoding::all::UTF_8;
+use encoding::{DecoderTrap, Encoding};
 /// print a Vec<u8> as String encoded in UTF8 and escaping "unprintable" Bytes
 pub fn vec_u8_to_string(bytes: &[u8]) -> String {
-    UTF_8.decode(bytes, DecoderTrap::Replace).expect("cannot escape invalid Byte")
+    UTF_8
+        .decode(bytes, DecoderTrap::Replace)
+        .expect("cannot escape invalid Byte")
 }
 
 /// converting u32 to vec<u8>

@@ -1,17 +1,18 @@
-extern crate tini;
-extern crate base64;
+//! All functions related to reading a .ini and storing and loading values to the environment
 
-use tini::Ini;
-use std::env;
+extern crate base64;
+extern crate tini;
+
 use log::debug;
+use std::env;
+use std::fmt::Debug;
 use std::fs::File;
 use std::io::Read;
 use std::str::FromStr;
-use std::fmt::Debug;
-
+use tini::Ini;
 
 /// get the ini file reference
-pub fn get_ini(path: &str) -> Ini{
+pub fn get_ini(path: &str) -> Ini {
     Ini::from_file(path).expect("Failed to open ini file")
 }
 
@@ -66,34 +67,43 @@ pub fn inipath2env(sec: &str, key: &str, file_ini: &str, exp_key: Option<&str>) 
 
 /// Returns the value from ini
 pub fn inipath2var<T>(sec: &str, key: &str, file_ini: &str) -> T
-    where T: FromStr,
-          <T as FromStr>::Err: Debug
+where
+    T: FromStr,
+    <T as FromStr>::Err: Debug,
 {
     let msg = format!("no key [{}]{}", sec, key);
-    Ini::from_file(file_ini).expect("Failed to open ini file").get(sec, key).expect(&msg)
+    Ini::from_file(file_ini)
+        .expect("Failed to open ini file")
+        .get(sec, key)
+        .expect(&msg)
 }
 
 /// Returns the value from an environment variable
 pub fn env2var<T>(exp_key: &str) -> T
-    where T: FromStr,
-          <T as FromStr>::Err: Debug
+where
+    T: FromStr,
+    <T as FromStr>::Err: Debug,
 {
     let msg_miss = format!("No {} as environment variable set", exp_key);
     let msg_parse = format!("Can't parse {} into desired variable", exp_key);
-    env::var(exp_key).expect(&msg_miss).parse().expect(&msg_parse)
+    env::var(exp_key)
+        .expect(&msg_miss)
+        .parse()
+        .expect(&msg_parse)
 }
 
 /// Returns the vector-value from an environment variable
 pub fn env2var_vec<T>(exp_key: &str) -> Vec<T>
-    where T: FromStr,
-          <T as FromStr>::Err: Debug
+where
+    T: FromStr,
+    <T as FromStr>::Err: Debug,
 {
     let msg_miss = format!("No {} as environment variable set", exp_key);
     let msg_parse = format!("Can't parse {} into desired variable", exp_key);
     let vec_strings = env::var(exp_key).expect(&msg_miss);
 
     let mut result: Vec<T> = Vec::new();
-    for e_string in vec_strings.split_whitespace(){
+    for e_string in vec_strings.split_whitespace() {
         result.push(e_string.parse().expect(&msg_parse));
     }
     result

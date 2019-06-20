@@ -1,16 +1,20 @@
+use std::fmt::Debug;
+
+use log::debug;
+
+use crate::node::pbft::state::ReplicaState;
+use crate::simulation::config::NodeConfig;
+use crate::simulation::event::{Event, Message, Reception};
+use crate::simulation::time::Time;
+
+pub mod pbft;
+
 /***************************************************************************************************
 Contains everything related to nodes.
 The 'Node' trait must be implemented for all nodes that shall participate in the simulation. Currently, the only required function to implement is 'handle_event'.
 ***************************************************************************************************/
 
-use crate::config::NodeConfig;
-use crate::event::{Event, Message, Reception};
-use crate::pbft::state::ReplicaState;
-use crate::time::Time;
-use log::debug;
-use std::fmt::Debug;
-
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub enum NodeType {
     Dummy,
     PBFT,
@@ -20,7 +24,7 @@ pub enum NodeType {
 
 /// All nodes need to implement this trait
 pub trait Node: Debug {
-    /// this function is called from the simulation when an event for the node was in the queue, e.g. a 'reception event' containing a message designated to the node
+    /// called from the simulation when an event for the node was in the queue, e.g. a 'reception event' containing a message designated to the node
     fn handle_event(&mut self, reception: Reception, time: Time) -> Option<Vec<Event>>;
 }
 
@@ -34,7 +38,7 @@ pub fn build_node(config: NodeConfig) -> Box<dyn Node> {
 }
 
 /***************************************************************************************************
-I proudly present: on of the dumbest node imaginable, the DummyNode
+I proudly present: one of the dumbest nodes imaginable, the DummyNode
 ***************************************************************************************************/
 
 #[derive(Debug)]
@@ -89,7 +93,7 @@ Your main playground, i guess
 /// required for the participation in a PBFT cluster.
 #[derive(Debug)]
 pub struct PBFTNode {
-    // if of the node
+    // id of the node
     id: u32,
     /// holds the state required to take part in a PBFT cluster.
     state: ReplicaState,
@@ -113,7 +117,6 @@ impl Node for PBFTNode {
         match reception.message {
             Message::PBFT(pbft_message) => {
                 if let Some(out_events) = self.state.handle_message(pbft_message) {
-
                     let mut events = Vec::<Event>::with_capacity(out_events.len());
 
                     for (recv_id, msg) in out_events {
@@ -130,7 +133,7 @@ impl Node for PBFTNode {
                 None
             }
             _ => {
-                panic!("Received a non pbft message for a pbft node!");
+                panic!("Received a non node.pbft message for a node.pbft node!");
             }
         }
     }
