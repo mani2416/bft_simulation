@@ -48,10 +48,10 @@ impl Default for SimulationConfig {
         let node_type = match node_type.as_str() {
             "dummy" => NodeType::Dummy,
             "node.pbft" => NodeType::PBFT,
-            "zyzzyva" => NodeType::Zyzzyva,
+            "node.zyzzyva" => NodeType::Zyzzyva,
             "rbft" => NodeType::RBFT,
             _ => panic!(
-                "node_type in ini is not available, allowed are 'dummy', 'node.pbft', 'zyzzyva', 'rbft'"
+                "node_type in ini is not available, allowed are 'dummy', 'node.pbft', 'node.zyzzyva', 'rbft'"
             ),
         };
         let number_of_nodes = env2var("node.number_of_nodes");

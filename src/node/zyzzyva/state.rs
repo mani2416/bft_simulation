@@ -12,8 +12,8 @@ use crate::simulation::time::Time;
  * in PBFT. Requests may get lost.
  * 2. Properly model the client
  * 3. How to properly send client requests?
- * 4. How to realise a client timer for resending request?
- *      - will need a separate thread
+ * 4. How to realise a client timer for eventually sending a commit certificate?
+ *      - put nodes in separate threads?
  *
  *
  */
@@ -204,35 +204,48 @@ impl State {
                         msg_in
                     ),
                     None => {
-                        let mut result = None;
                         // TODO: add some validations
-                        let mut entry = LogEntry::new(msg_in.c_req, msg_in.view, msg_in.seq_number);
-                        // we only execute the result if we have a full history
-                        if self.lc_seq_num + 1 == msg_in.seq_number {
-                            // TODO: check if we can execute more subsequent requests that are already in the log
-                            self.lc_seq_num += 1;
-                            entry.speculative_execution = true;
+                        self.log.insert(
+                            msg_in.c_req.operation,
+                            LogEntry::new(msg_in.c_req, msg_in.view, msg_in.seq_number),
+                        );
 
-                            log_result(
-                                time,
-                                Some(self.id),
-                                &format!("{};speculative_commit", msg_in.c_req.operation),
-                            );
+                        let mut result = Vec::<(u32, ZyzzyvaMessage)>::new();
 
-                            result = Some(vec![(
-                                CLIENT_ID,
-                                ZyzzyvaMessage::SpeculativeResponse(SpeculativeResponse {
-                                    c_req: msg_in.c_req,
-                                    view: self.current_view,
-                                    seq_number: msg_in.seq_number,
-                                    sender_id: self.id,
-                                }),
-                            )]);
+                        // we execute all requests for which we potentially filled gaps by receiving the current OrderRequest
+                        loop {
+                            let lc_sn = self.lc_seq_num;
+                            if let Some(entry) = self
+                                .log
+                                .values_mut()
+                                .find(|entry| entry.seq_number == lc_sn + 1)
+                            {
+                                self.lc_seq_num += 1;
+                                entry.speculative_execution = true;
+                                log_result(
+                                    time,
+                                    Some(self.id),
+                                    &format!("{};speculative_commit", entry.c_req.operation),
+                                );
+
+                                result.push((
+                                    CLIENT_ID,
+                                    ZyzzyvaMessage::SpeculativeResponse(SpeculativeResponse {
+                                        c_req: entry.c_req,
+                                        view: entry.view,
+                                        seq_number: entry.seq_number,
+                                        sender_id: self.id,
+                                    }),
+                                ));
+                                continue;
+                            }
+                            break;
                         }
 
-                        self.log.insert(msg_in.c_req.operation, entry);
-
-                        return result;
+                        return match result.len() {
+                            0 => None,
+                            _ => Some(result),
+                        };
                     }
                 }
             }
