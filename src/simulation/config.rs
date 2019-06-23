@@ -10,11 +10,14 @@ use log4rs::config::{Appender, Config, Logger, Root};
 use log4rs::encode::pattern::PatternEncoder;
 use mc_utils::ini::env2var;
 
-use crate::node::NodeType;
+
 use crate::node::pbft::messages::{ClientRequest, PBFTMessage};
+use crate::node::zyzzyva::messages as zyzzyva_messages;
+use crate::node::zyzzyva::state::CLIENT_ID;
+use crate::node::NodeType;
+
 use crate::simulation::event::{Event, Message};
 use crate::simulation::time::Time;
-
 /// Config to initialize the simulation
 pub struct SimulationConfig {
     pub node_type: NodeType,
@@ -100,6 +103,18 @@ impl RequestBatchConfig {
                     //TODO Client requests will go to node '1' by default, add option to define receiver in RequestConfig?
                     let new_time = time.add_milli(u64::from((counter - 1) * self.interval));
                     result.push(Event::new_reception(1, message, new_time));
+                }
+                NodeType::Zyzzyva => {
+                    // TODO: find better approach to start the ball rolling
+                    let message =
+                        Message::Zyzzyva(zyzzyva_messages::ZyzzyvaMessage::ClientRequest(
+                            zyzzyva_messages::ClientRequest {
+                                sender_id: 0,
+                                operation: (*request_id_counter as u32),
+                            },
+                        ));
+                    let new_time = time.add_milli(u64::from((counter - 1) * self.interval));
+                    result.push(Event::new_reception(CLIENT_ID, message, new_time));
                 }
                 _ => panic!(
                     "Received client requests for node type {:?}, which is not implemented yet",

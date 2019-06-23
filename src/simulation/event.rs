@@ -5,6 +5,7 @@ Everything related to events.
 use std::cmp::Ordering;
 
 use crate::node::pbft::messages::PBFTMessage;
+use crate::node::zyzzyva::messages::ZyzzyvaMessage;
 use crate::simulation::config::RequestBatchConfig;
 use crate::simulation::time::Time;
 
@@ -114,5 +115,7 @@ impl Reception {
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Message {
     Dummy,
-    PBFT(PBFTMessage), //Zyzzyva(ZyzzyvaMessage), RBFT(RBFTMessage),
+    PBFT(PBFTMessage), 
+    Zyzzyva(ZyzzyvaMessage), 
+    //RBFT(RBFTMessage),
 }
