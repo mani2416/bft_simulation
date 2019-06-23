@@ -265,14 +265,24 @@ impl State {
                     Some(entry) => {
                         if let Some(cert) = &mut entry.commit_certificate {
                             cert.insert(msg_in);
+                            let cert_len = cert.len();
 
-                            if cert.len() == self.num_of_nodes as usize {
+                            if cert_len == self.quorum_size {
                                 log_result(
                                     time,
                                     Some(self.id),
                                     &format!("{};commit_certificate", msg_in.c_req.operation),
                                 );
                             }
+
+                            if cert_len == self.num_of_nodes as usize {
+                                log_result(
+                                    time,
+                                    Some(self.id),
+                                    &format!("{};completed", msg_in.c_req.operation),
+                                );
+                            }
+
                         } else {
                             panic!("Client's commit certificate was not initialized");
                         }
