@@ -1,8 +1,9 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
-use log::{debug, warn};
+use log::warn;
 
 use crate::simulation::config::log_result;
+use crate::simulation::time::Time;
 
 use super::messages::*;
 
@@ -22,10 +23,6 @@ pub enum ReplicaRole {
     Primary,
     Backup,
 }
-
-// TODO: The current structure of storing messages works good for the "happy-path",
-//       but does not tolerate if messages arrive out of order / get lost...
-//       Therefore, improve the way of storing messages!!
 
 /// The type defining an entry of the replica's log. An entry stores the request
 /// and all related information required by the protocol.
@@ -73,7 +70,7 @@ impl LogEntry {
 #[derive(Debug)]
 pub struct ReplicaState {
     id: u32,
-    log: Vec<LogEntry>,
+    log: HashMap<u32, LogEntry>,
     /// The fixed number of nodes participating in the cluster.
     num_of_nodes: u32,
     /// The view number in which the replica currently operates.
@@ -112,7 +109,7 @@ impl ReplicaState {
             },
             current_view: initial_view as u64,
             next_seq_num: 0,
-            log: Vec::new(),
+            log: HashMap::new(),
             last_commited_index: 0,
             peers: (1..num_of_nodes + 1)
                 .into_iter()
@@ -124,13 +121,13 @@ impl ReplicaState {
 
     /// Single exposed function that acts as a entry point for handling incoming
     /// messages by peers or clients.
-    pub fn handle_message(&mut self, message: PBFTMessage) -> Output {
+    pub fn handle_message(&mut self, message: PBFTMessage, time: Time) -> Output {
         match message {
-            PBFTMessage::ClientRequest(m) => self.handle_client_request(m),
+            PBFTMessage::ClientRequest(m) => self.handle_client_request(m, time),
             PBFTMessage::PrePrepare(m) => self.handle_pre_prepare_message(m),
-            PBFTMessage::Prepare(m) => self.handle_prepare_message(m),
-            PBFTMessage::Commit(m) => self.handle_commit_message(m),
-            _ => None,
+            PBFTMessage::Prepare(m) => self.handle_prepare_message(m, time),
+            PBFTMessage::Commit(m) => self.handle_commit_message(m, time),
+            PBFTMessage::ClientResponse(_) => panic!("Replica should not receive a ClientResponse"),
         }
     }
 
@@ -163,8 +160,13 @@ impl ReplicaState {
     }
 
     /// Handles incoming client requests.
-    fn handle_client_request(&mut self, msg_in: ClientRequest) -> Output {
+    fn handle_client_request(&mut self, msg_in: ClientRequest, time: Time) -> Output {
         if self.is_primary() {
+            log_result(
+                time,
+                Some(self.id),
+                &format!("{}; request", msg_in.operation),
+            );
             // TODO: needs more validations before processing
 
             let seq_number = self.next_seq_num();
@@ -180,7 +182,7 @@ impl ReplicaState {
                 .prepare_quorum
                 .insert(PrepareQuorumMessage::PrePrepareMessage(preprepare));
 
-            self.log.push(entry);
+            self.log.insert(msg_in.operation, entry);
 
             return self.create_peer_broadcast_output(PBFTMessage::PrePrepare(preprepare));
         } else {
@@ -208,7 +210,7 @@ impl ReplicaState {
                 .prepare_quorum
                 .insert(PrepareQuorumMessage::PrepareMessage(prepare));
 
-            self.log.push(entry);
+            self.log.insert(msg_in.c_req.operation, entry);
 
             return self.create_peer_broadcast_output(PBFTMessage::Prepare(prepare));
         } else {
@@ -217,58 +219,80 @@ impl ReplicaState {
         None
     }
 
-    fn handle_prepare_message(&mut self, message: PrepareMessage) -> Output {
-        // TODO: we assume seq_number - 1 == index. Eventually, won't work anymore. Therefore, FIX!
-        // correct, when we add delays or message omissions the messages will arrive out of order and uninitialized indices might be called
-        let entry = &mut self.log[(message.seq_number - 1) as usize];
+    fn handle_prepare_message(&mut self, msg_in: PrepareMessage, time: Time) -> Output {
+        match self.log.get_mut(&msg_in.c_req.operation) {
+            Some(entry) => {
+                // TODO: needs validations before processing
+                entry
+                    .prepare_quorum
+                    .insert(PrepareQuorumMessage::PrepareMessage(msg_in));
 
-        // TODO: needs validations before processing
+                if !entry.prepared && entry.prepare_quorum.len() >= (2 * self.f + 1) as usize {
+                    log_result(
+                        time,
+                        Some(self.id),
+                        &format!("{}; prepared", msg_in.c_req.operation),
+                    );
+                    entry.prepared = true;
 
-        entry
-            .prepare_quorum
-            .insert(PrepareQuorumMessage::PrepareMessage(message));
+                    let commit = CommitMessage {
+                        view: entry.view,
+                        seq_number: entry.seq_number,
+                        c_req: entry.client_request,
+                        sender_id: self.id,
+                    };
 
-        if !entry.prepared && entry.prepare_quorum.len() >= (2 * self.f + 1) as usize {
-            debug!(target:"node", "PBFTNode {} successfully prepared for seq_number {}", self.id, message.seq_number);
-            // TODO make an entry for the result logger. The state still needs to be given the time of the reception event, so you can log it here.
-            // Call should be something like this: log_result(<time>, Some(self.id), "prepared"); // or "prepare quorum completed"
-            entry.prepared = true;
+                    entry.commit_quorum.insert(commit);
 
-            let commit = CommitMessage {
-                view: entry.view,
-                seq_number: entry.seq_number,
-                c_req: entry.client_request,
-                sender_id: self.id,
-            };
+                    return self.create_peer_broadcast_output(PBFTMessage::Commit(commit));
+                }
+            }
+            None => {
+                let mut entry = LogEntry::new(msg_in.view, msg_in.view, msg_in.c_req);
+                entry
+                    .prepare_quorum
+                    .insert(PrepareQuorumMessage::PrepareMessage(msg_in));
 
-            entry.commit_quorum.insert(commit);
-
-            return self.create_peer_broadcast_output(PBFTMessage::Commit(commit));
-        }
+                self.log.insert(msg_in.c_req.operation, entry);
+            }
+        };
         None
     }
 
-    fn handle_commit_message(&mut self, message: CommitMessage) -> Output {
-        // TODO: we assume seq_number - 1 == index. Eventually, won't work anymore. Therefore, FIX!
-        let entry = &mut self.log[(message.seq_number - 1) as usize];
+    fn handle_commit_message(&mut self, msg_in: CommitMessage, time: Time) -> Output {
+        match self.log.get_mut(&msg_in.c_req.operation) {
+            Some(entry) => {
+                // TODO: needs validations before processing
 
-        // TODO: needs validations before processing
+                entry.commit_quorum.insert(msg_in);
 
-        entry.commit_quorum.insert(message);
+                if !entry.committed_local && entry.commit_quorum.len() >= (2 * self.f + 1) as usize
+                {
+                    log_result(
+                        time,
+                        Some(self.id),
+                        &format!("{}; committed_local", msg_in.c_req.operation),
+                    );
 
-        if !entry.committed_local && entry.commit_quorum.len() >= (2 * self.f + 1) as usize {
-            debug!(target:"node", "PBFTNode {} successfully committed locally for seq_number {} ", self.id, message.seq_number);
-            entry.committed_local = true;
+                    entry.committed_local = true;
 
-            let response = ClientResponse {
-                result: entry.client_request.operation,
-                sender_id: self.id,
-            };
+                    let response = ClientResponse {
+                        result: entry.client_request.operation,
+                        sender_id: self.id,
+                    };
 
-            println!(
-                "PBFTNode {} would send to client response {:?}",
-                self.id, response
-            );
+                    println!(
+                        "PBFTNode {} would send to client response {:?}",
+                        self.id, response
+                    );
+                }
+            }
+            None => {
+                let mut entry = LogEntry::new(msg_in.view, msg_in.view, msg_in.c_req);
+                entry.commit_quorum.insert(msg_in);
+
+                self.log.insert(msg_in.c_req.operation, entry);
+            }
         }
         None
     }

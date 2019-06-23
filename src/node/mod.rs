@@ -33,7 +33,7 @@ pub fn build_node(config: NodeConfig) -> Box<dyn Node> {
     match &config.node_type {
         NodeType::Dummy => Box::new(DummyNode::new(config)),
         NodeType::PBFT => Box::new(PBFTNode::new(config)),
-        _ => panic!("Only 'dummy' nodes are currently implemented!"),
+        _ => panic!("Only 'dummy' and 'PBFT' nodes are currently implemented!"),
     }
 }
 
@@ -112,11 +112,11 @@ impl PBFTNode {
 
 impl Node for PBFTNode {
     fn handle_event(&mut self, reception: Reception, time: Time) -> Option<Vec<Event>> {
-        debug!(target: "node", "PBFTNode {} is processing a reception: {:?}", self.id ,&reception);
+        debug!(target: "node", "PBFTNode {} is processing a reception at {}ms: {:?}", self.id, time.to_string(), &reception);
 
         match reception.message {
             Message::PBFT(pbft_message) => {
-                if let Some(out_events) = self.state.handle_message(pbft_message) {
+                if let Some(out_events) = self.state.handle_message(pbft_message, time) {
                     let mut events = Vec::<Event>::with_capacity(out_events.len());
 
                     for (recv_id, msg) in out_events {
@@ -124,6 +124,7 @@ impl Node for PBFTNode {
                             self.id,
                             recv_id,
                             Message::PBFT(msg),
+                            // TODO: provide a more realistic value
                             time.add_milli(5),
                         ))
                     }
