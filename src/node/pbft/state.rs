@@ -248,7 +248,6 @@ impl ReplicaState {
                     .prepare_quorum
                     .insert(PrepareQuorumMessage::PrepareMessage(msg_in));
 
-                // todo: check if preprepare message exists
                 if !entry.prepared && entry.has_prepare_quorum_of(self.quorum_size) {
                     log_result(
                         time,
