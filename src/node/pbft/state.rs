@@ -165,7 +165,7 @@ impl ReplicaState {
             log_result(
                 time,
                 Some(self.id),
-                &format!("{}; request", msg_in.operation),
+                &format!("{};request", msg_in.operation),
             );
             // TODO: needs more validations before processing
 
@@ -231,7 +231,7 @@ impl ReplicaState {
                     log_result(
                         time,
                         Some(self.id),
-                        &format!("{}; prepared", msg_in.c_req.operation),
+                        &format!("{};prepared", msg_in.c_req.operation),
                     );
                     entry.prepared = true;
 
@@ -271,7 +271,7 @@ impl ReplicaState {
                     log_result(
                         time,
                         Some(self.id),
-                        &format!("{}; committed_local", msg_in.c_req.operation),
+                        &format!("{};committed_local", msg_in.c_req.operation),
                     );
 
                     entry.committed_local = true;
