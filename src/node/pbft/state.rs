@@ -62,6 +62,25 @@ impl LogEntry {
             prepared: false,
         }
     }
+
+    pub fn has_commit_quorum_of(&self, quorum_size: usize) -> bool {
+        self.commit_quorum.len() >= quorum_size
+    }
+
+    pub fn has_prepare_quorum_of(&self, quorum_size: usize) -> bool {
+        self.has_pre_prepare_message() && self.prepare_quorum.len() >= quorum_size
+    }
+
+    fn has_pre_prepare_message(&self) -> bool {
+        if let Some(_) = self.prepare_quorum.iter().find(|msg| match msg {
+            PrepareQuorumMessage::PrePrepareMessage(_) => true,
+            _ => false,
+        }) {
+            true
+        } else {
+            false
+        }
+    }
 }
 
 /// The type defining the state required for participating in a PBFT cluster.
@@ -83,8 +102,8 @@ pub struct ReplicaState {
     role: ReplicaRole,
     /// Holds the IDs of other peers.
     peers: Vec<u32>,
-    /// Specifies the resilience given the `num_of_nodes` (= 3f + 1).
-    f: u32,
+    /// The minimal size of a quorum (2 * f + 1) s.t. f < n/3, n = num_of_nodes
+    quorum_size: usize,
 }
 
 impl ReplicaState {
@@ -98,6 +117,8 @@ impl ReplicaState {
             panic!("Need at least 4 PBFT nodes but got only {}", num_of_nodes);
         }
 
+        let nn = num_of_nodes as usize;
+        let f: usize = nn / 3 + nn % 3 - 1;
         let initial_view = 1;
 
         ReplicaState {
@@ -115,7 +136,7 @@ impl ReplicaState {
                 .into_iter()
                 .filter(|i| *i != id)
                 .collect(),
-            f: num_of_nodes / 3 + num_of_nodes % 3 - 1,
+            quorum_size: 2 * f + 1 as usize,
         }
     }
 
@@ -227,7 +248,8 @@ impl ReplicaState {
                     .prepare_quorum
                     .insert(PrepareQuorumMessage::PrepareMessage(msg_in));
 
-                if !entry.prepared && entry.prepare_quorum.len() >= (2 * self.f + 1) as usize {
+                // todo: check if preprepare message exists
+                if !entry.prepared && entry.has_prepare_quorum_of(self.quorum_size) {
                     log_result(
                         time,
                         Some(self.id),
@@ -266,8 +288,7 @@ impl ReplicaState {
 
                 entry.commit_quorum.insert(msg_in);
 
-                if !entry.committed_local && entry.commit_quorum.len() >= (2 * self.f + 1) as usize
-                {
+                if !entry.committed_local && entry.has_commit_quorum_of(self.quorum_size) {
                     log_result(
                         time,
                         Some(self.id),
@@ -295,5 +316,49 @@ impl ReplicaState {
             }
         }
         None
+    }
+}
+
+/*******************************************************************************
+ * TESTS
+ ******************************************************************************/
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+    use crate::simulation::time::Time;
+
+    #[test]
+    fn require_prepreare_message_in_prepare_quorum() {
+        let num_of_nodes = 4;
+        let f = 1;
+        let quorum_size = 2 * f + 1;
+
+        let mut state = ReplicaState::new(1337, num_of_nodes);
+
+        let c_req = ClientRequest {
+            operation: 0,
+            sender_id: 0,
+        };
+        let mut prepare_msg = PrepareMessage {
+            c_req,
+            view: 1,
+            seq_number: 1,
+            sender_id: 1,
+        };
+
+        for i in 1..=3 {
+            prepare_msg.sender_id = i;
+            state.handle_prepare_message(prepare_msg, Time::new(32));
+        }
+
+        if let Some(entry) = state.log.get(&c_req.operation) {
+            assert!(entry.prepare_quorum.len() >= quorum_size as usize);
+            assert_eq!(entry.has_prepare_quorum_of(quorum_size), false);
+            assert_eq!(entry.prepared, false);
+        } else {
+            panic!("Entry should exist!");
+        }
     }
 }
