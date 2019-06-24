@@ -8,7 +8,7 @@ use crate::simulation::time::Time;
 use super::messages::*;
 
 /// The output produced by this module. Consumed by the host running the `ReplicaState`.
-type Output = Option<Vec<(u32, PBFTMessage)>>;
+type Output = Vec<(u32, PBFTMessage)>;
 
 /// The type defining allowed Prepare (1st) quorum messages.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
@@ -132,7 +132,7 @@ impl ReplicaState {
             next_seq_num: 0,
             log: HashMap::new(),
             last_commited_index: 0,
-            peers: (1..num_of_nodes + 1)
+            peers: (1..=num_of_nodes)
                 .into_iter()
                 .filter(|i| *i != id)
                 .collect(),
@@ -142,10 +142,10 @@ impl ReplicaState {
 
     /// Single exposed function that acts as a entry point for handling incoming
     /// messages by peers or clients.
-    pub fn handle_message(&mut self, message: PBFTMessage, time: Time) -> Output {
+    pub fn handle_message(&mut self, message: PBFTMessage, time: Time) -> Option<Output> {
         match message {
             PBFTMessage::ClientRequest(m) => self.handle_client_request(m, time),
-            PBFTMessage::PrePrepare(m) => self.handle_pre_prepare_message(m),
+            PBFTMessage::PrePrepare(m) => self.handle_pre_prepare_message(m, time),
             PBFTMessage::Prepare(m) => self.handle_prepare_message(m, time),
             PBFTMessage::Commit(m) => self.handle_commit_message(m, time),
             PBFTMessage::ClientResponse(_) => panic!("Replica should not receive a ClientResponse"),
@@ -171,17 +171,17 @@ impl ReplicaState {
     /// Creates an `Output` such that the host broadcasts `msg_out` to all other
     /// replicas in the cluster.
     fn create_peer_broadcast_output(&self, msg_out: PBFTMessage) -> Output {
-        let mut output = Vec::<(u32, PBFTMessage)>::with_capacity(self.peers.len());
+        let mut output = Output::with_capacity(self.peers.len());
 
         for id in &self.peers {
             output.push((*id, msg_out));
         }
 
-        return Some(output);
+        output
     }
 
     /// Handles incoming client requests.
-    fn handle_client_request(&mut self, msg_in: ClientRequest, time: Time) -> Output {
+    fn handle_client_request(&mut self, msg_in: ClientRequest, time: Time) -> Option<Output> {
         if self.is_primary() {
             log_result(
                 time,
@@ -205,17 +205,32 @@ impl ReplicaState {
 
             self.log.insert(msg_in.operation, entry);
 
-            return self.create_peer_broadcast_output(PBFTMessage::PrePrepare(preprepare));
-        } else {
-            warn!(target: "node", "Non-primary PBFTNode {} received a client request", self.id);
+            return Some(self.create_peer_broadcast_output(PBFTMessage::PrePrepare(preprepare)));
         }
+
+        warn!(target: "node", "Non-primary PBFTNode {} received a client request", self.id);
+
         None
     }
 
-    fn handle_pre_prepare_message(&mut self, msg_in: PrePrepareMessage) -> Output {
+    fn handle_pre_prepare_message(
+        &mut self,
+        msg_in: PrePrepareMessage,
+        time: Time,
+    ) -> Option<Output> {
         // TODO: needs validations before processing
         if self.curr_primary() == msg_in.sender_id {
-            let mut entry = LogEntry::new(msg_in.view, msg_in.seq_number, msg_in.c_req);
+            let mut output = Output::new();
+            let entry = match self.log.get_mut(&msg_in.c_req.operation) {
+                Some(entry) => entry,
+                None => {
+                    self.log.insert(
+                        msg_in.c_req.operation,
+                        LogEntry::new(msg_in.view, msg_in.seq_number, msg_in.c_req),
+                    );
+                    self.log.get_mut(&msg_in.c_req.operation).unwrap()
+                }
+            };
 
             let prepare = PrepareMessage {
                 view: msg_in.view,
@@ -231,16 +246,50 @@ impl ReplicaState {
                 .prepare_quorum
                 .insert(PrepareQuorumMessage::PrepareMessage(prepare));
 
-            self.log.insert(msg_in.c_req.operation, entry);
 
-            return self.create_peer_broadcast_output(PBFTMessage::Prepare(prepare));
-        } else {
-            warn!(target:"node", "PBFTNode {} received a PrePrepare message from non-primary peer {}", self.id, msg_in.sender_id);
+            if !entry.prepared && entry.has_prepare_quorum_of(self.quorum_size) {
+                log_result(
+                    time,
+                    Some(self.id),
+                    &format!("{};prepared", msg_in.c_req.operation),
+                );
+
+                entry.prepared = true;
+
+                let commit = CommitMessage {
+                    view: entry.view,
+                    seq_number: entry.seq_number,
+                    c_req: entry.client_request,
+                    sender_id: self.id,
+                };
+
+                entry.commit_quorum.insert(commit);
+
+                if !entry.committed_local && entry.has_commit_quorum_of(self.quorum_size) {
+                    log_result(
+                        time,
+                        Some(self.id),
+                        &format!("{};committed_local", msg_in.c_req.operation),
+                    );
+
+                    entry.committed_local = true;
+
+                }
+                // send batch of commit messages since we prepared
+                output.append(&mut self.create_peer_broadcast_output(PBFTMessage::Commit(commit)));
+            }
+            // send batch of prepare messages after receiving a pre-prepare
+            output.append(&mut self.create_peer_broadcast_output(PBFTMessage::Prepare(prepare)));
+
+            return Some(output);
         }
+
+        warn!(target:"node", "PBFTNode {} received a PrePrepare message from non-primary peer {}", self.id, msg_in.sender_id);
+
         None
     }
 
-    fn handle_prepare_message(&mut self, msg_in: PrepareMessage, time: Time) -> Output {
+    fn handle_prepare_message(&mut self, msg_in: PrepareMessage, time: Time) -> Option<Output> {
         match self.log.get_mut(&msg_in.c_req.operation) {
             Some(entry) => {
                 // TODO: needs validations before processing
@@ -254,6 +303,7 @@ impl ReplicaState {
                         Some(self.id),
                         &format!("{};prepared", msg_in.c_req.operation),
                     );
+
                     entry.prepared = true;
 
                     let commit = CommitMessage {
@@ -265,11 +315,22 @@ impl ReplicaState {
 
                     entry.commit_quorum.insert(commit);
 
-                    return self.create_peer_broadcast_output(PBFTMessage::Commit(commit));
+                    if !entry.committed_local && entry.has_commit_quorum_of(self.quorum_size) {
+                        log_result(
+                            time,
+                            Some(self.id),
+                            &format!("{};committed_local", msg_in.c_req.operation),
+                        );
+
+                        entry.committed_local = true;
+                    }
+
+                    return Some(self.create_peer_broadcast_output(PBFTMessage::Commit(commit)));
                 }
             }
             None => {
-                let mut entry = LogEntry::new(msg_in.view, msg_in.view, msg_in.c_req);
+                let mut entry = LogEntry::new(msg_in.view, msg_in.seq_number, msg_in.c_req);
+
                 entry
                     .prepare_quorum
                     .insert(PrepareQuorumMessage::PrepareMessage(msg_in));
@@ -280,36 +341,27 @@ impl ReplicaState {
         None
     }
 
-    fn handle_commit_message(&mut self, msg_in: CommitMessage, time: Time) -> Output {
+    fn handle_commit_message(&mut self, msg_in: CommitMessage, time: Time) -> Option<Output> {
         match self.log.get_mut(&msg_in.c_req.operation) {
             Some(entry) => {
                 // TODO: needs validations before processing
-
                 entry.commit_quorum.insert(msg_in);
 
-                if !entry.committed_local && entry.has_commit_quorum_of(self.quorum_size) {
+                if !entry.committed_local
+                    && entry.has_commit_quorum_of(self.quorum_size)
+                    && entry.prepared
+                {
                     log_result(
                         time,
                         Some(self.id),
                         &format!("{};committed_local", msg_in.c_req.operation),
                     );
 
-                    //TODO A node might currently advance to 'committed_local' even though it might never have been 'prepared'
                     entry.committed_local = true;
-
-                    let response = ClientResponse {
-                        result: entry.client_request.operation,
-                        sender_id: self.id,
-                    };
-
-                    println!(
-                        "PBFTNode {} would send to client response {:?}",
-                        self.id, response
-                    );
                 }
             }
             None => {
-                let mut entry = LogEntry::new(msg_in.view, msg_in.view, msg_in.c_req);
+                let mut entry = LogEntry::new(msg_in.view, msg_in.seq_number, msg_in.c_req);
                 entry.commit_quorum.insert(msg_in);
 
                 self.log.insert(msg_in.c_req.operation, entry);
@@ -357,6 +409,68 @@ mod tests {
             assert!(entry.prepare_quorum.len() >= quorum_size as usize);
             assert_eq!(entry.has_prepare_quorum_of(quorum_size), false);
             assert_eq!(entry.prepared, false);
+        } else {
+            panic!("Entry should exist!");
+        }
+    }
+
+    #[test]
+    fn state_transition_from_prepared_to_committed() {
+        let num_of_nodes = 4;
+        let mut state = ReplicaState::new(1337, num_of_nodes);
+        let c_req = ClientRequest {
+            operation: 0,
+            sender_id: 0,
+        };
+        let mut commit_msg = CommitMessage {
+            c_req,
+            view: 1,
+            seq_number: 1,
+            sender_id: 1,
+        };
+
+        for i in 1..num_of_nodes {
+            commit_msg.sender_id = i;
+            state.handle_commit_message(commit_msg, Time::new(32));
+        }
+
+        // we cannot commit locally without being prepared, although we might have
+        // a commit quorum present
+        if let Some(entry) = state.log.get(&c_req.operation) {
+            assert_eq!(entry.committed_local, false);
+            assert_eq!(entry.prepared, false);
+            assert_eq!(entry.has_commit_quorum_of(state.quorum_size), true);
+        } else {
+            panic!("Entry should exist!");
+        }
+
+        state.handle_pre_prepare_message(
+            PrePrepareMessage {
+                c_req,
+                view: 1,
+                seq_number: 1,
+                sender_id: 1,
+            },
+            Time::new(32),
+        );
+
+        let mut prepare_msg = PrepareMessage {
+            c_req,
+            view: 1,
+            seq_number: 1,
+            sender_id: 1,
+        };
+
+        for i in 1..num_of_nodes {
+            prepare_msg.sender_id = i;
+            state.handle_prepare_message(prepare_msg, Time::new(32));
+        }
+
+        // after becoming prepared and having a commit quorum collected we
+        // can finally commit locally
+        if let Some(entry) = state.log.get(&c_req.operation) {
+            assert_eq!(entry.prepared, true);
+            assert_eq!(entry.committed_local, true);
         } else {
             panic!("Entry should exist!");
         }
