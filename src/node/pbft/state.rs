@@ -294,6 +294,7 @@ impl ReplicaState {
                         &format!("{};committed_local", msg_in.c_req.operation),
                     );
 
+                    //TODO A node might currently advance to 'committed_local' even though it might never have been 'prepared'
                     entry.committed_local = true;
 
                     let response = ClientResponse {
@@ -324,9 +325,9 @@ impl ReplicaState {
 
 #[cfg(test)]
 mod tests {
+    use crate::simulation::time::Time;
 
     use super::*;
-    use crate::simulation::time::Time;
 
     #[test]
     fn require_prepreare_message_in_prepare_quorum() {
