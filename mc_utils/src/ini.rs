@@ -4,7 +4,7 @@ extern crate base64;
 extern crate tini;
 
 use log::debug;
-use std::env;
+pub use std::env;
 use std::fmt::Debug;
 use std::fs::File;
 use std::io::Read;

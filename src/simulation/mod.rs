@@ -5,7 +5,7 @@ use std::sync::{
     mpsc::{Receiver, Sender}, Mutex,
 };
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use log::{debug, info, warn};
 
@@ -77,7 +77,10 @@ impl Simulation {
         info!("Simulation started");
         debug!(target: "simulation", "Simulation started");
 
+        let mut timeout_active : Option<Instant> = None;
+
         loop {
+
             // access the queue, get the latest element and free the mutex
             let mut queue = self.event_queue.lock().expect("Mutex lock poisoned. It appears that someone panicked, that wasn't allowed to panic");
             let event = (*queue).pop();
@@ -86,6 +89,11 @@ impl Simulation {
             // if an event was returned, handle it
             if let Some(event) = event {
                 debug!(target: "simulation", "Processing event: {:?}", &event);
+
+                if timeout_active.is_some(){
+                    timeout_active = None;
+                }
+
                 match event.event_type {
                     EventType::Admin(admin_type) => match admin_type {
                         AdminType::Stop => {
@@ -123,7 +131,15 @@ impl Simulation {
                         }
                     }
                 }
-                thread::sleep(Duration::from_millis(0));
+            } else{
+                if let Some(time) = timeout_active{
+                    if Instant::now().duration_since(time) > Duration::from_secs(1){
+                        info!("Simulation queue timed out, shutting down");
+                        return;
+                    }
+                }else{
+                    timeout_active = Some(Instant::now());
+                }
             }
         }
     }

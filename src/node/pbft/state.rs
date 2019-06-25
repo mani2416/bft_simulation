@@ -239,6 +239,12 @@ impl ReplicaState {
                 c_req: msg_in.c_req,
             };
 
+            log_result(
+                time,
+                Some(self.id),
+                &format!("{};pre-prepared", msg_in.c_req.operation),
+            );
+
             entry
                 .prepare_quorum
                 .insert(PrepareQuorumMessage::PrePrepareMessage(msg_in));
