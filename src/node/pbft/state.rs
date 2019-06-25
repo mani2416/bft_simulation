@@ -303,7 +303,7 @@ impl ReplicaState {
                     //TODO A node might currently advance to 'committed_local' even though it might never have been 'prepared'
                     entry.committed_local = true;
 
-                    let response = ClientResponse {
+                    let _response = ClientResponse {
                         result: entry.client_request.operation,
                         sender_id: self.id,
                     };

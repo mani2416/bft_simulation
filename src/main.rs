@@ -31,7 +31,7 @@ fn main() {
             for _i in 1..2 {
                 // add some requests
                 s1.send(EventType::Admin(AdminType::ClientRequests(
-                    RequestBatchConfig::new(mc_utils::ini::env2var("simulation.requests"), 10),
+                    RequestBatchConfig::new(mc_utils::ini::env2var("simulation.requests"), 1000),
                 )))
                     .unwrap();
 

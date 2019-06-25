@@ -44,11 +44,11 @@ impl Default for SimulationConfig {
         let node_type = env2var::<String>("node.node_type");
         let node_type = match node_type.as_str() {
             "dummy" => NodeType::Dummy,
-            "node.pbft" => NodeType::PBFT,
+            "pbft" => NodeType::PBFT,
             "zyzzyva" => NodeType::Zyzzyva,
             "rbft" => NodeType::RBFT,
             _ => panic!(
-                "node_type in ini is not available, allowed are 'dummy', 'node.pbft', 'zyzzyva', 'rbft'"
+                "node_type in ini is not available, allowed are 'dummy', 'pbft', 'zyzzyva', 'rbft'"
             ),
         };
 
