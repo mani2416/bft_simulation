@@ -145,7 +145,7 @@ impl ReplicaState {
     pub fn handle_message(&mut self, message: PBFTMessage, time: Time) -> Output {
         match message {
             PBFTMessage::ClientRequest(m) => self.handle_client_request(m, time),
-            PBFTMessage::PrePrepare(m) => self.handle_pre_prepare_message(m),
+            PBFTMessage::PrePrepare(m) => self.handle_pre_prepare_message(m, time),
             PBFTMessage::Prepare(m) => self.handle_prepare_message(m, time),
             PBFTMessage::Commit(m) => self.handle_commit_message(m, time),
             PBFTMessage::ClientResponse(_) => panic!("Replica should not receive a ClientResponse"),
@@ -212,7 +212,7 @@ impl ReplicaState {
         None
     }
 
-    fn handle_pre_prepare_message(&mut self, msg_in: PrePrepareMessage) -> Output {
+    fn handle_pre_prepare_message(&mut self, msg_in: PrePrepareMessage, time: Time) -> Output {
         // TODO: needs validations before processing
         if self.curr_primary() == msg_in.sender_id {
             let mut entry = LogEntry::new(msg_in.view, msg_in.seq_number, msg_in.c_req);
@@ -223,6 +223,12 @@ impl ReplicaState {
                 sender_id: self.id,
                 c_req: msg_in.c_req,
             };
+
+            log_result(
+                time,
+                Some(self.id),
+                &format!("{};pre-prepared", msg_in.c_req.operation),
+            );
 
             entry
                 .prepare_quorum
@@ -302,10 +308,10 @@ impl ReplicaState {
                         sender_id: self.id,
                     };
 
-                    println!(
-                        "PBFTNode {} would send to client response {:?}",
-                        self.id, response
-                    );
+//                    println!(
+//                        "PBFTNode {} would send to client response {:?}",
+//                        self.id, response
+//                    );
                 }
             }
             None => {

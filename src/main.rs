@@ -39,14 +39,6 @@ fn main() {
             }
         });
 
-        // start a new thread to send a cancellation signal after some seconds
-//    thread::spawn(move || {
-//        thread::sleep(Duration::from_secs(3));
-//        s2.send(EventType::Admin(AdminType::Stop)).unwrap();
-//    });
-
-        // start the simulation
-        //    thread::sleep(Duration::from_millis(100));
         simulation.start_handling();
     }
 }
