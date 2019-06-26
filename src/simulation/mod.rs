@@ -77,10 +77,9 @@ impl Simulation {
         info!("Simulation started");
         debug!(target: "simulation", "Simulation started for n = {} of type {:?}", self.node_map.len(), self.node_type);
 
-        let mut timeout_active : Option<Instant> = None;
+        let mut timeout_active: Option<Instant> = None;
 
         loop {
-
             // access the queue, get the latest element and free the mutex
             let mut queue = self.event_queue.lock().expect("Mutex lock poisoned. It appears that someone panicked, that wasn't allowed to panic");
             let event = (*queue).pop();
@@ -90,7 +89,7 @@ impl Simulation {
             if let Some(event) = event {
                 debug!(target: "simulation", "Processing event: {:?}", &event);
 
-                if timeout_active.is_some(){
+                if timeout_active.is_some() {
                     timeout_active = None;
                 }
 
@@ -131,13 +130,13 @@ impl Simulation {
                         }
                     }
                 }
-            } else{
-                if let Some(time) = timeout_active{
-                    if Instant::now().duration_since(time) > Duration::from_secs(1){
+            } else {
+                if let Some(time) = timeout_active {
+                    if Instant::now().duration_since(time) > Duration::from_secs(1) {
                         info!("Simulation queue timed out, shutting down");
                         return;
                     }
-                }else{
+                } else {
                     timeout_active = Some(Instant::now());
                 }
             }

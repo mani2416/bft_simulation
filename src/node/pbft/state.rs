@@ -252,7 +252,6 @@ impl ReplicaState {
                 .prepare_quorum
                 .insert(PrepareQuorumMessage::PrepareMessage(prepare));
 
-
             if !entry.prepared && entry.has_prepare_quorum_of(self.quorum_size) {
                 log_result(
                     time,
@@ -279,7 +278,6 @@ impl ReplicaState {
                     );
 
                     entry.committed_local = true;
-
                 }
                 // send batch of commit messages since we prepared
                 output.append(&mut self.create_peer_broadcast_output(PBFTMessage::Commit(commit)));

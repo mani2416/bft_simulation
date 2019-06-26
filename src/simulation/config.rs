@@ -59,7 +59,7 @@ impl Default for SimulationConfig {
         }
     }
 }
-impl SimulationConfig{
+impl SimulationConfig {
     pub fn number_of_nodes(mut self, number_of_nodes: u32) -> SimulationConfig {
         self.number_of_nodes = number_of_nodes;
         self
@@ -118,8 +118,7 @@ impl RequestBatchConfig {
 }
 
 pub fn log_result(time: Time, node_id: Option<u32>, message: &str) {
-
-    let n:u32 = mc_utils::ini::env2var("node.nodes");
+    let n: u32 = mc_utils::ini::env2var("node.nodes");
 
     let mut result = String::new();
     result.push_str(&time.to_string());
@@ -156,7 +155,6 @@ pub fn initialize_logging() {
         Config::builder().appender(Appender::builder().build("stdout", Box::new(stdout)));
 
     if mc_utils::ini::env2var("log.debug") {
-
         let log_node = FileAppender::builder()
             .encoder(Box::new(PatternEncoder::new("{l} - {m}{n}")))
             .append(false)
@@ -187,14 +185,17 @@ pub fn initialize_logging() {
     }
 
     if mc_utils::ini::env2var("log.result") {
-
         for n in mc_utils::ini::env2var_vec::<u32>("node.nodes_vec") {
-
-            let r:u32 = mc_utils::ini::env2var("simulation.requests");
-            let p:f64 = mc_utils::ini::env2var("network.omission_probability");
+            let r: u32 = mc_utils::ini::env2var("simulation.requests");
+            let p: f64 = mc_utils::ini::env2var("network.omission_probability");
 
             let name_result_logger = format!("result_{}", n);
-            let name_result_log_file = format!("log/result_{:0>3}_{:0>3}_{}.log", n, r, (p*100 as f64) as u32);
+            let name_result_log_file = format!(
+                "log/result_{:0>3}_{:0>3}_{}.log",
+                n,
+                r,
+                (p * 100 as f64) as u32
+            );
 
             let log_result = FileAppender::builder()
                 .encoder(Box::new(PatternEncoder::new("{m}{n}")))
@@ -203,7 +204,9 @@ pub fn initialize_logging() {
                 .unwrap();
 
             config = config
-                .appender(Appender::builder().build(name_result_log_file.clone(), Box::new(log_result)))
+                .appender(
+                    Appender::builder().build(name_result_log_file.clone(), Box::new(log_result)),
+                )
                 .logger(
                     Logger::builder()
                         .appender(name_result_log_file)

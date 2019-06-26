@@ -17,7 +17,6 @@ fn main() {
 
     let node_vec = mc_utils::ini::env2var_vec::<u32>("node.nodes_vec");
     for n in node_vec {
-
         mc_utils::ini::env::set_var("node.nodes", n.to_string());
 
         // initialize a new simulation
@@ -33,7 +32,7 @@ fn main() {
                 s1.send(EventType::Admin(AdminType::ClientRequests(
                     RequestBatchConfig::new(mc_utils::ini::env2var("simulation.requests"), 1000),
                 )))
-                    .unwrap();
+                .unwrap();
 
                 thread::sleep(Duration::from_millis(100));
             }
