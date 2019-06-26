@@ -74,8 +74,11 @@ impl Simulation {
 
     // Starts the action: loops over events in the queue and executes them sequentially
     pub fn start_handling(&mut self) {
-        info!("Simulation started");
-        debug!(target: "simulation", "Simulation started for n = {} of type {:?}", self.node_map.len(), self.node_type);
+        info!(
+            "Simulation started for n = {} of type {:?}",
+            self.node_map.len(),
+            self.node_type
+        );
 
         let mut timeout_active: Option<Instant> = None;
 
