@@ -1,7 +1,6 @@
 extern crate bft_simulation;
 
 use std::thread;
-use std::time::Duration;
 
 use bft_simulation::simulation::config::{
     initialize_ini, initialize_logging, RequestBatchConfig, SimulationConfig,
@@ -24,18 +23,14 @@ fn main() {
         let mut simulation = Simulation::new(config_sim.number_of_nodes(n));
 
         // get channels to send events to the simulation queue
-        let s1 = simulation.get_sender();
+        let s = simulation.get_sender();
 
         thread::spawn(move || {
-            for _i in 1..2 {
-                // add some requests
-                s1.send(EventType::Admin(AdminType::ClientRequests(
-                    RequestBatchConfig::new(mc_utils::ini::env2var("simulation.requests"), 1000),
-                )))
-                .unwrap();
-
-                thread::sleep(Duration::from_millis(100));
-            }
+            // add some requests
+            s.send(EventType::Admin(AdminType::ClientRequests(
+                RequestBatchConfig::new(mc_utils::ini::env2var("simulation.requests"), 1000),
+            )))
+            .unwrap();
         });
 
         simulation.start_handling();

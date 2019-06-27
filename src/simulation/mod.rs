@@ -136,9 +136,15 @@ impl Simulation {
             } else {
                 if let Some(time) = timeout_active {
                     if Instant::now().duration_since(time) > Duration::from_secs(1) {
-                        info!("Simulation queue timed out, shutting down");
-                        return;
+                        // Well, this is a little with the shotgun through the knee to hit the eye. nut iit should do the job:
+                        // We inform our external receiver to stop the simulation, which should stop this loop
+                        info!("Simulation queue timed out, sending termination signal");
+                        self.external_sender.send(EventType::Admin(AdminType::Stop)).unwrap();
+                        // Reset the timeout
+                        timeout_active = Some(Instant::now());
                     }
+                    // Wait some time
+                    thread::sleep(Duration::from_millis(500));
                 } else {
                     timeout_active = Some(Instant::now());
                 }
@@ -177,18 +183,23 @@ impl Simulation {
     fn start_receiving(&self, receiver: Receiver<EventType>) {
         let queue_clone = Arc::clone(&self.event_queue);
 
+        debug!(target: "simulation", "Receiver thread: Starting");
         thread::spawn(move || loop {
             if let Ok(event_type) = receiver.recv() {
-                debug!(target: "simulation", "Received an event type through the external channel: {:?}", &event_type);
+                debug!(target: "simulation", "Receiver thread: Received event type: {:?}", &event_type);
                 let mut queue = queue_clone.lock().expect("Mutex lock on queue poisoned. It appears that someone panicked, that wasn't allowed to panic.");
                 match event_type {
                     EventType::Admin(admin_type) => {
                         match admin_type{
-                            AdminType::Stop => (*queue).push(Event::new_admin_stop()),
+                            AdminType::Stop => {
+                                (*queue).push(Event::new_admin_stop());
+                                debug!(target: "simulation", "Receiver thread: Terminating");
+                                break;
+                            },
                             AdminType::ClientRequests(config) => (*queue).push(Event::new_admin_requests_from_config(config)),
                         }
                     },
-                    _ => panic!("Received ann {:?} from external channel, only Admin events are configured to be arrive from sn external channel", event_type)
+                    _ => panic!(" Receiver thread: Received '{:?}' from external channel, but only Admin events are configured to be arrive from an external channel", event_type)
                 }
             }
         });
