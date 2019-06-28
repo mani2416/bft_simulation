@@ -10,6 +10,18 @@ use super::messages::*;
 /// The output produced by this module. Consumed by the host running the `ReplicaState`.
 type Output = Vec<(u32, PBFTMessage)>;
 
+/// Creates an `Output` such that the host broadcasts `msg_out` to all other
+/// replicas in the cluster.
+fn create_peer_broadcast_output(msg_out: PBFTMessage, peers: &Vec<u32>) -> Output {
+    let mut output = Output::with_capacity(peers.len());
+
+    for id in peers {
+        output.push((*id, msg_out));
+    }
+
+    output
+}
+
 /// The type defining allowed Prepare (1st) quorum messages.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
 enum PrepareQuorumMessage {
@@ -90,6 +102,10 @@ impl LogEntry {
 pub struct ReplicaState {
     id: u32,
     log: HashMap<u32, LogEntry>,
+    /// For garbage collection purposes we store here IDs of locally
+    /// commited requests. This allows us to remove the associated log entry and
+    /// ignore all subsequent incoming messages related to the request.
+    cl_reqs: HashSet<u32>,
     /// The fixed number of nodes participating in the cluster.
     num_of_nodes: u32,
     /// The view number in which the replica currently operates.
@@ -131,6 +147,7 @@ impl ReplicaState {
             current_view: initial_view as u64,
             next_seq_num: 0,
             log: HashMap::new(),
+            cl_reqs: HashSet::new(),
             last_commited_index: 0,
             peers: (1..=num_of_nodes)
                 .into_iter()
@@ -143,6 +160,12 @@ impl ReplicaState {
     /// Single exposed function that acts as a entry point for handling incoming
     /// messages by peers or clients.
     pub fn handle_message(&mut self, message: PBFTMessage, time: Time) -> Option<Output> {
+        // we only process a message if we not already committed locally the
+        // associated request
+        if self.can_ignore_message(message) {
+            return None;
+        }
+
         match message {
             PBFTMessage::ClientRequest(m) => self.handle_client_request(m, time),
             PBFTMessage::PrePrepare(m) => self.handle_pre_prepare_message(m, time),
@@ -168,16 +191,65 @@ impl ReplicaState {
         self.next_seq_num
     }
 
-    /// Creates an `Output` such that the host broadcasts `msg_out` to all other
-    /// replicas in the cluster.
-    fn create_peer_broadcast_output(&self, msg_out: PBFTMessage) -> Output {
-        let mut output = Output::with_capacity(self.peers.len());
+    /// Checks if we can ignore the `message`. Returns `true` iff for the associated
+    /// request we already committed locally and the incoming message is of type
+    /// `PBFTMessage::Prepare` or `PBFTMessage::Commit`
+    fn can_ignore_message(&self, message: PBFTMessage) -> bool {
+        match message {
+            PBFTMessage::Prepare(m) => self.cl_reqs.contains(&m.c_req.operation),
+            PBFTMessage::Commit(m) => self.cl_reqs.contains(&m.c_req.operation),
+            _ => false,
+        }
+    }
 
-        for id in &self.peers {
-            output.push((*id, msg_out));
+    /// Updates the predicates for a log entry associated with the `req_id`.
+    fn update_prediactes(&mut self, req_id: u32, mut output: Output, time: Time) -> Option<Output> {
+        let entry = self.log.get_mut(&req_id).unwrap();
+
+        // `prepared` predicate check
+        if !entry.prepared && entry.has_prepare_quorum_of(self.quorum_size) {
+            log_result(
+                time,
+                Some(self.id),
+                &format!("{};prepared", entry.client_request.operation),
+            );
+
+            entry.prepared = true;
+
+            let commit =
+                CommitMessage::new(entry.client_request, entry.view, entry.seq_number, self.id);
+
+            entry.commit_quorum.insert(commit);
+
+            // send batch of commit messages since we prepared
+            output.append(&mut create_peer_broadcast_output(
+                PBFTMessage::Commit(commit),
+                &self.peers,
+            ));
         }
 
-        output
+        // `committed_local` prediacte check
+        if entry.prepared && !entry.committed_local && entry.has_commit_quorum_of(self.quorum_size)
+        {
+            log_result(
+                time,
+                Some(self.id),
+                &format!("{};committed_local", entry.client_request.operation),
+            );
+
+            entry.committed_local = true;
+
+            // we don't need the entry anymore. Therefore, remove it from the log
+            self.log.remove(&req_id);
+            // update the committed local set so we ignore subsequent incoming messages
+            // related to this request
+            self.cl_reqs.insert(req_id);
+        }
+
+        match output.len() {
+            0 => None,
+            _ => Some(output),
+        }
     }
 
     /// Handles incoming client requests.
@@ -188,16 +260,10 @@ impl ReplicaState {
                 Some(self.id),
                 &format!("{};request", msg_in.operation),
             );
-            // TODO: needs more validations before processing
 
             let seq_number = self.next_seq_num();
             let mut entry = LogEntry::new(self.current_view, seq_number, msg_in);
-            let preprepare = PrePrepareMessage {
-                view: self.current_view,
-                seq_number,
-                sender_id: self.id,
-                c_req: msg_in,
-            };
+            let preprepare = PrePrepareMessage::new(msg_in, self.current_view, seq_number, self.id);
 
             entry
                 .prepare_quorum
@@ -205,7 +271,10 @@ impl ReplicaState {
 
             self.log.insert(msg_in.operation, entry);
 
-            return Some(self.create_peer_broadcast_output(PBFTMessage::PrePrepare(preprepare)));
+            return Some(create_peer_broadcast_output(
+                PBFTMessage::PrePrepare(preprepare),
+                &self.peers,
+            ));
         }
 
         warn!(target: "node", "Non-primary PBFTNode {} received a client request", self.id);
@@ -218,32 +287,23 @@ impl ReplicaState {
         msg_in: PrePrepareMessage,
         time: Time,
     ) -> Option<Output> {
-        // TODO: needs validations before processing
         if self.curr_primary() == msg_in.sender_id {
-            let mut output = Output::new();
-            let entry = match self.log.get_mut(&msg_in.c_req.operation) {
+            let req_id = msg_in.c_req.operation;
+            let entry = match self.log.get_mut(&req_id) {
                 Some(entry) => entry,
                 None => {
                     self.log.insert(
-                        msg_in.c_req.operation,
+                        req_id,
                         LogEntry::new(msg_in.view, msg_in.seq_number, msg_in.c_req),
                     );
-                    self.log.get_mut(&msg_in.c_req.operation).unwrap()
+                    self.log.get_mut(&req_id).unwrap()
                 }
             };
 
-            let prepare = PrepareMessage {
-                view: msg_in.view,
-                seq_number: msg_in.seq_number,
-                sender_id: self.id,
-                c_req: msg_in.c_req,
-            };
+            log_result(time, Some(self.id), &format!("{};pre-prepared", req_id));
 
-            log_result(
-                time,
-                Some(self.id),
-                &format!("{};pre-prepared", msg_in.c_req.operation),
-            );
+            let prepare =
+                PrepareMessage::new(entry.client_request, entry.view, entry.seq_number, self.id);
 
             entry
                 .prepare_quorum
@@ -252,40 +312,9 @@ impl ReplicaState {
                 .prepare_quorum
                 .insert(PrepareQuorumMessage::PrepareMessage(prepare));
 
-            if !entry.prepared && entry.has_prepare_quorum_of(self.quorum_size) {
-                log_result(
-                    time,
-                    Some(self.id),
-                    &format!("{};prepared", msg_in.c_req.operation),
-                );
+            let output = create_peer_broadcast_output(PBFTMessage::Prepare(prepare), &self.peers);
 
-                entry.prepared = true;
-
-                let commit = CommitMessage {
-                    view: entry.view,
-                    seq_number: entry.seq_number,
-                    c_req: entry.client_request,
-                    sender_id: self.id,
-                };
-
-                entry.commit_quorum.insert(commit);
-
-                if !entry.committed_local && entry.has_commit_quorum_of(self.quorum_size) {
-                    log_result(
-                        time,
-                        Some(self.id),
-                        &format!("{};committed_local", msg_in.c_req.operation),
-                    );
-
-                    entry.committed_local = true;
-                }
-                // send batch of commit messages since we prepared
-                output.append(&mut self.create_peer_broadcast_output(PBFTMessage::Commit(commit)));
-            }
-            // send batch of prepare messages after receiving a pre-prepare
-            output.append(&mut self.create_peer_broadcast_output(PBFTMessage::Prepare(prepare)));
-
-            return Some(output);
+            return self.update_prediactes(req_id, output, time);
         }
 
         warn!(target:"node", "PBFTNode {} received a PrePrepare message from non-primary peer {}", self.id, msg_in.sender_id);
@@ -294,43 +323,15 @@ impl ReplicaState {
     }
 
     fn handle_prepare_message(&mut self, msg_in: PrepareMessage, time: Time) -> Option<Output> {
-        match self.log.get_mut(&msg_in.c_req.operation) {
+        let req_id = msg_in.c_req.operation;
+
+        match self.log.get_mut(&req_id) {
             Some(entry) => {
-                // TODO: needs validations before processing
                 entry
                     .prepare_quorum
                     .insert(PrepareQuorumMessage::PrepareMessage(msg_in));
 
-                if !entry.prepared && entry.has_prepare_quorum_of(self.quorum_size) {
-                    log_result(
-                        time,
-                        Some(self.id),
-                        &format!("{};prepared", msg_in.c_req.operation),
-                    );
-
-                    entry.prepared = true;
-
-                    let commit = CommitMessage {
-                        view: entry.view,
-                        seq_number: entry.seq_number,
-                        c_req: entry.client_request,
-                        sender_id: self.id,
-                    };
-
-                    entry.commit_quorum.insert(commit);
-
-                    if !entry.committed_local && entry.has_commit_quorum_of(self.quorum_size) {
-                        log_result(
-                            time,
-                            Some(self.id),
-                            &format!("{};committed_local", msg_in.c_req.operation),
-                        );
-
-                        entry.committed_local = true;
-                    }
-
-                    return Some(self.create_peer_broadcast_output(PBFTMessage::Commit(commit)));
-                }
+                return self.update_prediactes(req_id, Output::new(), time);
             }
             None => {
                 let mut entry = LogEntry::new(msg_in.view, msg_in.seq_number, msg_in.c_req);
@@ -346,28 +347,18 @@ impl ReplicaState {
     }
 
     fn handle_commit_message(&mut self, msg_in: CommitMessage, time: Time) -> Option<Output> {
-        match self.log.get_mut(&msg_in.c_req.operation) {
+        let req_id = msg_in.c_req.operation;
+
+        match self.log.get_mut(&req_id) {
             Some(entry) => {
-                // TODO: needs validations before processing
                 entry.commit_quorum.insert(msg_in);
 
-                if !entry.committed_local
-                    && entry.has_commit_quorum_of(self.quorum_size)
-                    && entry.prepared
-                {
-                    log_result(
-                        time,
-                        Some(self.id),
-                        &format!("{};committed_local", msg_in.c_req.operation),
-                    );
-
-                    entry.committed_local = true;
-                }
+                return self.update_prediactes(req_id, Output::new(), time);
             }
             None => {
                 let mut entry = LogEntry::new(msg_in.view, msg_in.seq_number, msg_in.c_req);
-                entry.commit_quorum.insert(msg_in);
 
+                entry.commit_quorum.insert(msg_in);
                 self.log.insert(msg_in.c_req.operation, entry);
             }
         }
