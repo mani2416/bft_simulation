@@ -139,7 +139,9 @@ impl Simulation {
                         // Well, this is a little with the shotgun through the knee to hit the eye. nut iit should do the job:
                         // We inform our external receiver to stop the simulation, which should stop this loop
                         info!("Simulation queue timed out, sending termination signal");
-                        self.external_sender.send(EventType::Admin(AdminType::Stop)).unwrap();
+                        self.external_sender
+                            .send(EventType::Admin(AdminType::Stop))
+                            .unwrap();
                         // Reset the timeout
                         timeout_active = Some(Instant::now());
                     }
