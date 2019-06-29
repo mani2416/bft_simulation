@@ -30,6 +30,7 @@ impl Network {
 
     /// Handles broadcasts on the network
     pub fn handle_broadcast(&mut self, time: Time, broadcast: Broadcast) -> Option<Event> {
+
         // apply the omission probability
         if self.omission_prob > 0.0 && self.my_rng.gen::<f64>() <= self.omission_prob {
             debug!(target: "simulation", "Message is omitted: {:?}", &broadcast);

@@ -33,6 +33,17 @@ pub struct PrePrepareMessage {
     pub sender_id: u32,
 }
 
+impl PrePrepareMessage {
+    pub fn new(c_req: ClientRequest, view: u64, seq_number: u64, sender_id: u32) -> Self {
+        PrePrepareMessage {
+            c_req,
+            view,
+            seq_number,
+            sender_id,
+        }
+    }
+}
+
 /// Type defining a _Prepare_ message send by _backups_.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 pub struct PrepareMessage {
@@ -42,6 +53,17 @@ pub struct PrepareMessage {
     pub sender_id: u32,
 }
 
+impl PrepareMessage {
+    pub fn new(c_req: ClientRequest, view: u64, seq_number: u64, sender_id: u32) -> Self {
+        PrepareMessage {
+            c_req,
+            view,
+            seq_number,
+            sender_id,
+        }
+    }
+}
+
 /// Type defining a _Commit_ message send by the _primary_ and _backups_.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 pub struct CommitMessage {
@@ -49,4 +71,15 @@ pub struct CommitMessage {
     pub view: u64,
     pub seq_number: u64,
     pub sender_id: u32,
+}
+
+impl CommitMessage {
+    pub fn new(c_req: ClientRequest, view: u64, seq_number: u64, sender_id: u32) -> Self {
+        CommitMessage {
+            c_req,
+            view,
+            seq_number,
+            sender_id,
+        }
+    }
 }

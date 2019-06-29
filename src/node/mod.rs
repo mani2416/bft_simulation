@@ -135,7 +135,7 @@ impl Node for PBFTNode {
                 None
             }
             _ => {
-                panic!("Received a non node.pbft message for a node.pbft node!");
+                panic!("Received a non pbft message for a pbft node!");
             }
         }
     }

@@ -1,7 +1,6 @@
 extern crate bft_simulation;
 
 use std::thread;
-use std::time::Duration;
 
 use bft_simulation::simulation::config::{
     initialize_ini, initialize_logging, RequestBatchConfig, SimulationConfig,
@@ -15,33 +14,25 @@ fn main() {
     //initialize logger
     initialize_logging();
 
-    // initialize a new simulation
-    let config_sim = SimulationConfig::default();
-    let mut simulation = Simulation::new(config_sim);
+    let node_vec = mc_utils::ini::env2var_vec::<u32>("node.nodes_vec");
+    for n in node_vec {
+        mc_utils::ini::env::set_var("node.nodes", n.to_string());
 
-    // get channels to send events to the simulation queue
-    let s1 = simulation.get_sender();
-    let s2 = simulation.get_sender();
+        // initialize a new simulation
+        let config_sim = SimulationConfig::default();
+        let mut simulation = Simulation::new(config_sim.number_of_nodes(n));
 
-    thread::spawn(move || {
-        for _i in 1..2 {
+        // get channels to send events to the simulation queue
+        let s = simulation.get_sender();
+
+        thread::spawn(move || {
             // add some requests
-            s1.send(EventType::Admin(AdminType::ClientRequests(
-                RequestBatchConfig::new(10, 1),
+            s.send(EventType::Admin(AdminType::ClientRequests(
+                RequestBatchConfig::new(mc_utils::ini::env2var("simulation.requests"), 1000),
             )))
             .unwrap();
+        });
 
-            thread::sleep(Duration::from_millis(100));
-        }
-    });
-
-    // start a new thread to send a cancellation signal after some seconds
-    thread::spawn(move || {
-        thread::sleep(Duration::from_secs(3));
-        s2.send(EventType::Admin(AdminType::Stop)).unwrap();
-    });
-
-    // start the simulation
-    //    thread::sleep(Duration::from_millis(100));
-    simulation.start_handling();
+        simulation.start_handling();
+    }
 }
