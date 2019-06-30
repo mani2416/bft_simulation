@@ -22,6 +22,7 @@ pub enum EventType {
     Network,
     Broadcast(Broadcast),
     Reception(Reception),
+    Timeout(Timeout)
 }
 
 // An event abstraction, contains the time of the event and the event_type
@@ -70,6 +71,10 @@ impl Event {
     pub fn new_reception(id: u32, message: Message, time: Time) -> Self {
         Event::new(EventType::Reception(Reception::new(id, message)), time)
     }
+
+    pub fn new_timeout(c_id: u32, message: Message, time: Time) -> Self {
+        Event::new(EventType::Timeout(Timeout::new(c_id, message)), time)
+    }
 }
 
 // Order the events according to 'Time', with Admin events always having priority
@@ -108,6 +113,17 @@ pub struct Reception {
 impl Reception {
     pub fn new(id: u32, message: Message) -> Self {
         Reception { id, message }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Timeout {
+    pub c_id: u32,
+    pub message: Message
+}
+impl Timeout {
+    pub fn new(c_id: u32, message: Message) -> Self {
+        Timeout { c_id, message } 
     }
 }
 

@@ -1,8 +1,8 @@
 use std::collections::{binary_heap::BinaryHeap, HashMap};
 use std::sync::{
-    Arc,
     mpsc,
-    mpsc::{Receiver, Sender}, Mutex,
+    mpsc::{Receiver, Sender},
+    Arc, Mutex,
 };
 use std::thread;
 use std::time::{Duration, Instant};
@@ -11,12 +11,13 @@ use log::{debug, info, warn};
 
 use config::SimulationConfig;
 use event::{AdminType, Event, EventType};
-use time::Time;
+
 
 use crate::network::Network;
 use crate::node::{build_node, Node, NodeType};
 use crate::simulation::config::log_result;
-
+use mc_utils::ini::env2var;
+use time::Time;
 pub mod config;
 pub mod event;
 pub mod time;
@@ -132,6 +133,15 @@ impl Simulation {
                             self.add_event_to_queue(r);
                         }
                     }
+                    EventType::Timeout(t) => {
+                        self.update_time(event.time);
+                        let timeout = env2var::<u64>("node.client_timeout");
+                        let time = self.time.add_milli(timeout);
+                        let event = Event::new_reception(t.c_id, t.message, time);
+
+                        self.add_event_to_queue(event);
+                    }
+
                 }
             } else {
                 if let Some(time) = timeout_active {

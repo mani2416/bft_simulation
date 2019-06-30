@@ -1,27 +1,25 @@
 use std::collections::{HashMap, HashSet};
+use std::iter::FromIterator;
 
 use super::messages::*;
-
 use crate::simulation::config::log_result;
 use crate::simulation::time::Time;
 
-/**
- * FIX:
- * ----------
- * 1. Client requests go through our simulation network, this is not the case
- * in PBFT. Requests may get lost.
- * 2. Properly model the client
- * 3. How to properly send client requests?
- * 4. How to realise a client timer for eventually sending a commit certificate?
- *      - put nodes in separate threads?
- *
- *
- */
-
-
 pub const CLIENT_ID: u32 = 2;
 
-type Output = Option<Vec<(u32, ZyzzyvaMessage)>>;
+type Output = Vec<(u32, ZyzzyvaMessage)>;
+
+/// Creates an `Output` such that the host broadcasts `msg_out` to all other
+/// replicas in the cluster.
+fn create_peer_broadcast_output(msg_out: ZyzzyvaMessage, peers: &Vec<u32>) -> Output {
+    let mut output = Output::with_capacity(peers.len());
+
+    for id in peers {
+        output.push((*id, msg_out.clone()));
+    }
+
+    output
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Role {
@@ -35,8 +33,12 @@ pub struct LogEntry {
     c_req: ClientRequest,
     view: u64,
     seq_number: u64,
-    commit_certificate: Option<HashSet<SpeculativeResponse>>,
+    commit_certificate: HashSet<SpeculativeResponse>,
+    local_commits: HashSet<u32>,
     speculative_execution: bool,
+    committed_local: bool,
+    completed: bool,
+    timed_out: bool,
 }
 
 impl LogEntry {
@@ -45,12 +47,15 @@ impl LogEntry {
             c_req,
             view,
             seq_number,
-            commit_certificate: None,
+            commit_certificate: HashSet::new(),
+            local_commits: HashSet::new(),
             speculative_execution: false,
+            committed_local: false,
+            completed: false,
+            timed_out: false,
         }
     }
 }
-
 
 #[derive(Debug)]
 pub struct State {
@@ -104,12 +109,18 @@ impl State {
         }
     }
 
-    pub fn handle_message(&mut self, zyzzyva_message: ZyzzyvaMessage, time: Time) -> Output {
+    pub fn handle_message(
+        &mut self,
+        zyzzyva_message: ZyzzyvaMessage,
+        time: Time,
+    ) -> Option<Output> {
         match zyzzyva_message {
             ZyzzyvaMessage::ClientRequest(m) => self.handle_client_request(m, time),
+            ZyzzyvaMessage::ClientTimeout(m) => self.handle_client_timeout(m, time),
             ZyzzyvaMessage::OrderRequest(m) => self.handle_order_request(m, time),
             ZyzzyvaMessage::SpeculativeResponse(m) => self.handle_speculative_response(m, time),
             ZyzzyvaMessage::Commit(m) => self.handle_commit(m, time),
+            ZyzzyvaMessage::LocalCommit(m) => self.handle_local_commit(m, time),
         }
     }
 
@@ -124,70 +135,173 @@ impl State {
         self.next_seq_num
     }
 
-    fn handle_client_request(&mut self, msg_in: ClientRequest, time: Time) -> Output {
+    /// This method is used when requiring a consistent history before executing
+    /// a order request. Zyzzyva relies on such behaviour, however, to allow for
+    /// a fair comparison between our PBFT we should not require such behaviour,
+    /// but instead, send out a speculative response or local commit message as
+    /// soon as we receive the corresponding request.
+    fn _process_history(&mut self, time: Time) -> Output {
+        let mut output = Output::new();
+
+        loop {
+            let lc_sn = self.lc_seq_num;
+            if let Some(entry) = self
+                .log
+                .values_mut()
+                .find(|entry| entry.seq_number == lc_sn + 1)
+            {
+                if entry.commit_certificate.len() >= self.quorum_size {
+                    entry.committed_local = true;
+                    log_result(
+                        time,
+                        Some(self.id),
+                        &format!("{};committed_local", entry.c_req.operation),
+                    );
+
+                    output.push((
+                        CLIENT_ID,
+                        ZyzzyvaMessage::LocalCommit(LocalCommit::new(
+                            entry.c_req,
+                            entry.view,
+                            entry.seq_number,
+                            self.id,
+                        )),
+                    ));
+                } else {
+                    entry.speculative_execution = true;
+                    log_result(
+                        time,
+                        Some(self.id),
+                        &format!("{};speculative_commit", entry.c_req.operation),
+                    );
+                    output.push((
+                        CLIENT_ID,
+                        ZyzzyvaMessage::SpeculativeResponse(SpeculativeResponse::new(
+                            entry.c_req,
+                            entry.view,
+                            entry.seq_number,
+                            self.id,
+                        )),
+                    ));
+                }
+
+                self.lc_seq_num += 1;
+                continue;
+            }
+            break;
+        }
+        output
+    }
+
+    fn handle_local_commit(&mut self, msg_in: LocalCommit, time: Time) -> Option<Output> {
+        match self.log.get_mut(&msg_in.c_req.operation) {
+            Some(entry) => {
+                entry.local_commits.insert(msg_in.sender_id);
+
+                if entry.local_commits.len() >= self.quorum_size && !entry.completed {
+                    log_result(
+                        time,
+                        Some(self.id),
+                        &format!("{};completed", msg_in.c_req.operation),
+                    );
+                    entry.completed = true;
+                }
+            }
+            None => panic!(
+                "Received a local commit message for entry {} that is not stored at the client",
+                msg_in.c_req.operation
+            ),
+        }
+        None
+    }
+
+    fn handle_client_timeout(&mut self, msg_in: ClientTimeout, time: Time) -> Option<Output> {
+        if self.role == Role::Client {
+            if let Some(entry) = self.log.get_mut(&msg_in.req_id) {
+                entry.timed_out = true;
+                let cert_len = entry.commit_certificate.len();
+
+                // Zyzzyva 4.b
+                if cert_len >= self.quorum_size && cert_len < self.peers.len() {
+                    return Some(create_peer_broadcast_output(
+                        ZyzzyvaMessage::Commit(Commit::new(
+                            msg_in.req_id,
+                            entry.commit_certificate.clone().into_iter().collect(),
+                            self.id,
+                        )),
+                        &self.peers,
+                    ));
+                }
+
+                // Zyzzyva 4.c
+                if cert_len < self.quorum_size {
+                    log_result(time, Some(self.id), &format!("{};timed-out", msg_in.req_id));
+                }
+            }
+        } else {
+            panic!(
+                "Non-client node {} received a ClientTimeout message",
+                self.id
+            );
+        }
+
+        None
+    }
+
+    fn handle_client_request(&mut self, msg_in: ClientRequest, time: Time) -> Option<Output> {
         match self.role {
             // The client will receive the request from the simulation and create
             // a "real" request to the primary
             Role::Client => {
-                let request = ClientRequest {
-                    operation: msg_in.operation,
-                    sender_id: self.id,
-                };
-                let mut entry = LogEntry::new(request, 0, 0);
-                // only client initializes this
-                entry.commit_certificate = Some(HashSet::new());
+                let request = ClientRequest::new(msg_in.operation, self.id);
+                let entry = LogEntry::new(request, 0, 0);
+                let mut output = Output::with_capacity(2);
 
                 self.log.insert(msg_in.operation, entry);
 
-                return Some(vec![(
-                    self.curr_primary(),
-                    ZyzzyvaMessage::ClientRequest(request),
-                )]);
+                output.push((self.curr_primary(), ZyzzyvaMessage::ClientRequest(request)));
+                // add a timeout event for the client itself.
+                output.push((
+                    self.id,
+                    ZyzzyvaMessage::ClientTimeout(ClientTimeout::new(msg_in.operation)),
+                ));
+
+                return Some(output);
             }
             Role::Primary => {
-
                 let seq_number = self.next_seq_num();
-
                 let mut entry = LogEntry::new(msg_in, self.current_view, seq_number);
-                let mut output = Vec::<(u32, ZyzzyvaMessage)>::with_capacity(self.peers.len() + 1);
+                let mut output = Output::with_capacity(self.peers.len() + 1);
 
                 // if our history is complete, we can speculatively execute the request
-                if self.lc_seq_num + 1 == seq_number {
-                    log_result(
-                        time,
-                        Some(self.id),
-                        &format!("{};speculative_commit", msg_in.operation),
-                    );
+                log_result(
+                    time,
+                    Some(self.id),
+                    &format!("{};speculative_commit", msg_in.operation),
+                );
 
-                    self.lc_seq_num += 1;
-                    entry.speculative_execution = true;
-
-                    output.push((
-                        CLIENT_ID,
-                        ZyzzyvaMessage::SpeculativeResponse(SpeculativeResponse {
-                            c_req: msg_in,
-                            view: self.current_view,
-                            seq_number,
-                            sender_id: self.id,
-                        }),
-                    ));
-                }
-
+                entry.speculative_execution = true;
                 self.log.insert(msg_in.operation, entry);
 
+                output.push((
+                    CLIENT_ID,
+                    ZyzzyvaMessage::SpeculativeResponse(SpeculativeResponse::new(
+                        msg_in,
+                        self.current_view,
+                        seq_number,
+                        self.id,
+                    )),
+                ));
 
-                // broadcast order request
-                for i in &self.peers {
-                    output.push((
-                        *i,
-                        ZyzzyvaMessage::OrderRequest(OrderRequest {
-                            c_req: msg_in,
-                            view: self.current_view,
-                            seq_number,
-                            sender_id: self.id,
-                        }),
-                    ))
-                }
+                output.append(&mut create_peer_broadcast_output(
+                    ZyzzyvaMessage::OrderRequest(OrderRequest::new(
+                        msg_in,
+                        self.current_view,
+                        seq_number,
+                        self.id,
+                    )),
+                    &self.peers,
+                ));
 
                 return Some(output);
             }
@@ -195,60 +309,37 @@ impl State {
         }
     }
 
-    fn handle_order_request(&mut self, msg_in: OrderRequest, time: Time) -> Output {
+    fn handle_order_request(&mut self, msg_in: OrderRequest, time: Time) -> Option<Output> {
         match self.role {
-            Role::Backup => {
-                match self.log.get(&msg_in.c_req.operation) {
-                    Some(_) => panic!(
-                        "Received a subsequent OrderRequest for the same operation. {:?}",
-                        msg_in
-                    ),
-                    None => {
-                        // TODO: add some validations
-                        self.log.insert(
-                            msg_in.c_req.operation,
-                            LogEntry::new(msg_in.c_req, msg_in.view, msg_in.seq_number),
-                        );
+            Role::Backup => match self.log.get(&msg_in.c_req.operation) {
+                Some(_) => panic!(
+                    "Received a subsequent OrderRequest for the same operation. {:?}",
+                    msg_in
+                ),
+                None => {
+                    let mut entry = LogEntry::new(msg_in.c_req, msg_in.view, msg_in.seq_number);
 
-                        let mut result = Vec::<(u32, ZyzzyvaMessage)>::new();
+                    entry.speculative_execution = true;
 
-                        // we execute all requests for which we potentially filled gaps by receiving the current OrderRequest
-                        loop {
-                            let lc_sn = self.lc_seq_num;
-                            if let Some(entry) = self
-                                .log
-                                .values_mut()
-                                .find(|entry| entry.seq_number == lc_sn + 1)
-                            {
-                                self.lc_seq_num += 1;
-                                entry.speculative_execution = true;
-                                log_result(
-                                    time,
-                                    Some(self.id),
-                                    &format!("{};speculative_commit", entry.c_req.operation),
-                                );
+                    self.log.insert(msg_in.c_req.operation, entry);
 
-                                result.push((
-                                    CLIENT_ID,
-                                    ZyzzyvaMessage::SpeculativeResponse(SpeculativeResponse {
-                                        c_req: entry.c_req,
-                                        view: entry.view,
-                                        seq_number: entry.seq_number,
-                                        sender_id: self.id,
-                                    }),
-                                ));
-                                continue;
-                            }
-                            break;
-                        }
+                    log_result(
+                        time,
+                        Some(self.id),
+                        &format!("{};speculative_commit", msg_in.c_req.operation),
+                    );
 
-                        return match result.len() {
-                            0 => None,
-                            _ => Some(result),
-                        };
-                    }
+                    return Some(vec![(
+                        CLIENT_ID,
+                        ZyzzyvaMessage::SpeculativeResponse(SpeculativeResponse::new(
+                            msg_in.c_req,
+                            msg_in.view,
+                            msg_in.seq_number,
+                            self.id,
+                        )),
+                    )]);
                 }
-            }
+            },
             _ => {
                 panic!(
                     "Only Backups may received a Order Request! But node {} received one!",
@@ -258,40 +349,46 @@ impl State {
         }
     }
 
-    fn handle_speculative_response(&mut self, msg_in: SpeculativeResponse, time: Time) -> Output {
+    fn handle_speculative_response(
+        &mut self,
+        msg_in: SpeculativeResponse,
+        time: Time,
+    ) -> Option<Output> {
         match self.role {
             Role::Client => {
                 match self.log.get_mut(&msg_in.c_req.operation) {
                     Some(entry) => {
-                        if let Some(cert) = &mut entry.commit_certificate {
-                            cert.insert(msg_in);
-                            let cert_len = cert.len();
+                        // in case we timed-out we only acced commit messages
+                        // for the associated request
+                        if entry.timed_out {
+                            return None;
+                        }
 
-                            if cert_len == self.quorum_size {
-                                log_result(
-                                    time,
-                                    Some(self.id),
-                                    &format!("{};commit_certificate", msg_in.c_req.operation),
-                                );
-                            }
+                        let cert = &mut entry.commit_certificate;
+                        cert.insert(msg_in);
 
-                            if cert_len == self.num_of_nodes as usize {
-                                log_result(
-                                    time,
-                                    Some(self.id),
-                                    &format!("{};completed", msg_in.c_req.operation),
-                                );
-                            }
+                        if cert.len() == self.quorum_size {
+                            log_result(
+                                time,
+                                Some(self.id),
+                                &format!("{};commit_certificate", msg_in.c_req.operation),
+                            );
+                        }
 
-                        } else {
-                            panic!("Client's commit certificate was not initialized");
+                        // Zyzzyva 4.a
+                        if cert.len() == self.num_of_nodes as usize {
+                            log_result(
+                                time,
+                                Some(self.id),
+                                &format!("{};completed", msg_in.c_req.operation),
+                            );
+                            entry.completed = true;
                         }
                     }
                     None => {
                         panic!("Received a speculative response for an operation that was not requested!");
                     }
                 }
-
             }
             _ => panic!(
                 "Only the Client should receive a Speculative Reponse! But node {} received one!",
@@ -301,13 +398,63 @@ impl State {
         None
     }
 
-    fn handle_commit(&mut self, _msg_in: Commit, _time: Time) -> Output {
+    fn handle_commit(&mut self, msg_in: Commit, time: Time) -> Option<Output> {
         match self.role {
             Role::Client => panic!("A client should not receive a Commit message!"),
             _ => {
-                println!("{} received a Commit message", self.id);
+                if let Some(entry) = self.log.get_mut(&msg_in.req_id) {
+                    entry.commit_certificate = HashSet::from_iter(msg_in.certificate.into_iter());
+                    entry.committed_local = true;
+
+                    let mut output = Output::new();
+
+                    output.push((
+                        CLIENT_ID,
+                        ZyzzyvaMessage::LocalCommit(LocalCommit::new(
+                            entry.c_req,
+                            entry.view,
+                            entry.seq_number,
+                            self.id,
+                        )),
+                    ));
+
+                    return Some(output);
+                } else {
+                    let spec_res = msg_in.certificate[0];
+                    let mut entry =
+                        LogEntry::new(spec_res.c_req, spec_res.view, spec_res.seq_number);
+                    entry.commit_certificate = HashSet::from_iter(msg_in.certificate.into_iter());
+                    entry.committed_local = true;
+
+                    log_result(
+                        time,
+                        Some(self.id),
+                        &format!("{};committed_local", entry.c_req.operation),
+                    );
+
+                    let mut output = Output::with_capacity(1);
+
+                    output.push((
+                        CLIENT_ID,
+                        ZyzzyvaMessage::LocalCommit(LocalCommit::new(
+                            entry.c_req,
+                            entry.view,
+                            entry.seq_number,
+                            self.id,
+                        )),
+                    ));
+
+                    self.log.insert(msg_in.req_id, entry);
+
+                    return Some(output);
+                }
+                // let output = self.process_history(time);
+
+                // return match output.len() {
+                //     0 => None,
+                //     _ => Some(output),
+                // };
             }
         }
-        None
     }
 }

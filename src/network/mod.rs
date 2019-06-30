@@ -4,10 +4,11 @@ Everything related to the network.
 
 use log::debug;
 use mc_utils::ini::env2var;
-use rand::Rng;
 use rand::rngs::ThreadRng;
+use rand::Rng;
 
-use crate::simulation::event::{Broadcast, Event};
+use crate::node::zyzzyva::messages::ZyzzyvaMessage;
+use crate::simulation::event::{Broadcast, Event, Message::Zyzzyva};
 use crate::simulation::time::Time;
 
 /// Network abstraction
@@ -30,6 +31,16 @@ impl Network {
 
     /// Handles broadcasts on the network
     pub fn handle_broadcast(&mut self, time: Time, broadcast: Broadcast) -> Option<Event> {
+        // we ignore zyzzyva's client requests that go through the network
+        if let Zyzzyva(msg) = &broadcast.message {
+            if let ZyzzyvaMessage::ClientRequest(_) = &msg {
+                return Some(Event::new_reception(
+                    broadcast.id_to,
+                    broadcast.message,
+                    time,
+                ));
+            }
+        }
 
         // apply the omission probability
         if self.omission_prob > 0.0 && self.my_rng.gen::<f64>() <= self.omission_prob {

@@ -152,6 +152,7 @@ pub fn initialize_ini() {
     let ini = mc_utils::ini::get_ini("simulation.ini");
     mc_utils::ini::ini2env("node", "node_type", &ini, None);
     mc_utils::ini::ini2env("node", "nodes_vec", &ini, None);
+    mc_utils::ini::ini2env("node", "client_timeout", &ini, None);
     mc_utils::ini::ini2env("simulation", "requests", &ini, None);
     mc_utils::ini::ini2env("log", "debug", &ini, None);
     mc_utils::ini::ini2env("log", "result", &ini, None);

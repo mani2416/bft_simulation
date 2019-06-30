@@ -176,13 +176,20 @@ impl Node for ZyzzyvaNode {
                     let mut events = Vec::<Event>::with_capacity(out_events.len());
 
                     for (recv_id, msg) in out_events {
-                        events.push(Event::new_broadcast(
-                            self.id,
-                            recv_id,
-                            Message::Zyzzyva(msg),
-                            // TODO: provide a more realistic value
-                            time.add_milli(5),
-                        ))
+                        match msg {
+                            zyzzyva::messages::ZyzzyvaMessage::ClientTimeout(_) => {
+                                events.push(Event::new_timeout(recv_id, Message::Zyzzyva(msg), time));
+                            }
+                            _ => {
+                                events.push(Event::new_broadcast(
+                                    self.id,
+                                    recv_id,
+                                    Message::Zyzzyva(msg),
+                                    // TODO: provide a more realistic value
+                                    time.add_milli(5),
+                                ));
+                            }
+                        }
                     }
 
                     return Some(events);
