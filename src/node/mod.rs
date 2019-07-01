@@ -178,7 +178,20 @@ impl Node for ZyzzyvaNode {
                     for (recv_id, msg) in out_events {
                         match msg {
                             zyzzyva::messages::ZyzzyvaMessage::ClientTimeout(_) => {
-                                events.push(Event::new_timeout(recv_id, Message::Zyzzyva(msg), time));
+                                events.push(Event::new_timeout(
+                                    recv_id,
+                                    Message::Zyzzyva(msg),
+                                    time,
+                                ));
+                            }
+                            zyzzyva::messages::ZyzzyvaMessage::ClientRequest(_) => {
+                                events.push(Event::new_reliable_broadcast(
+                                    self.id,
+                                    recv_id,
+                                    Message::Zyzzyva(msg),
+                                    // TODO: provide a more realistic value
+                                    time.add_milli(5),
+                                ));
                             }
                             _ => {
                                 events.push(Event::new_broadcast(

@@ -22,7 +22,7 @@ pub enum EventType {
     Network,
     Broadcast(Broadcast),
     Reception(Reception),
-    Timeout(Timeout)
+    Timeout(Timeout),
 }
 
 // An event abstraction, contains the time of the event and the event_type
@@ -67,6 +67,14 @@ impl Event {
         )
     }
 
+    /// To generate a new reliable broadcast event (can not be omitted)
+    pub fn new_reliable_broadcast(id_from: u32, id_to: u32, message: Message, time: Time) -> Self {
+        Event::new(
+            EventType::Broadcast(Broadcast::new_reliable(id_from, id_to, message)),
+            time,
+        )
+    }
+
     /// To generate a new reception event
     pub fn new_reception(id: u32, message: Message, time: Time) -> Self {
         Event::new(EventType::Reception(Reception::new(id, message)), time)
@@ -93,6 +101,7 @@ pub struct Broadcast {
     pub id_from: u32,
     pub id_to: u32,
     pub message: Message,
+    pub can_omit: bool,
 }
 impl Broadcast {
     pub fn new(id_from: u32, id_to: u32, message: Message) -> Self {
@@ -100,6 +109,16 @@ impl Broadcast {
             id_from,
             id_to,
             message,
+            can_omit: true,
+        }
+    }
+
+    pub fn new_reliable(id_from: u32, id_to: u32, message: Message) -> Self {
+        Broadcast {
+            id_from,
+            id_to,
+            message,
+            can_omit: false,
         }
     }
 }
@@ -119,11 +138,11 @@ impl Reception {
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Timeout {
     pub c_id: u32,
-    pub message: Message
+    pub message: Message,
 }
 impl Timeout {
     pub fn new(c_id: u32, message: Message) -> Self {
-        Timeout { c_id, message } 
+        Timeout { c_id, message }
     }
 }
 
@@ -131,7 +150,7 @@ impl Timeout {
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Message {
     Dummy,
-    PBFT(PBFTMessage), 
-    Zyzzyva(ZyzzyvaMessage), 
+    PBFT(PBFTMessage),
+    Zyzzyva(ZyzzyvaMessage),
     //RBFT(RBFTMessage),
 }

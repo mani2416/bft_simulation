@@ -8,7 +8,6 @@ pub enum ZyzzyvaMessage {
     LocalCommit(LocalCommit),
 }
 
-
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 pub struct ClientTimeout {
     pub req_id: u32,

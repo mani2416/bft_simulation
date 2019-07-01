@@ -10,16 +10,15 @@ use log4rs::config::{Appender, Config, Logger, Root};
 use log4rs::encode::pattern::PatternEncoder;
 use mc_utils::ini::env2var;
 
-
+use crate::node::NodeType;
 use crate::node::pbft::messages::{ClientRequest as PBFTCR, PBFTMessage};
 use crate::node::zyzzyva::{
     messages::{ClientRequest as ZyzzyvaCR, ZyzzyvaMessage},
     state::CLIENT_ID,
 };
-use crate::node::NodeType;
-
 use crate::simulation::event::{Event, Message};
 use crate::simulation::time::Time;
+
 /// Config to initialize the simulation
 pub struct SimulationConfig {
     pub node_type: NodeType,
