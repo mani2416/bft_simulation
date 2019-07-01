@@ -185,12 +185,14 @@ impl Node for ZyzzyvaNode {
                                 ));
                             }
                             zyzzyva::messages::ZyzzyvaMessage::ClientRequest(_) => {
-                                events.push(Event::new_reliable_broadcast(
+                                events.push(Event::new_broadcast_custom(
                                     self.id,
                                     recv_id,
                                     Message::Zyzzyva(msg),
                                     // TODO: provide a more realistic value
                                     time.add_milli(5),
+                                    true,
+                                    Some(Time::new(0)),
                                 ));
                             }
                             _ => {

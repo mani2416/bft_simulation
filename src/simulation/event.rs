@@ -67,10 +67,19 @@ impl Event {
         )
     }
 
-    /// To generate a new reliable broadcast event (can not be omitted)
-    pub fn new_reliable_broadcast(id_from: u32, id_to: u32, message: Message, time: Time) -> Self {
+    /// To generate a new broadcast with custom parameters
+    pub fn new_broadcast_custom(
+        id_from: u32,
+        id_to: u32,
+        message: Message,
+        time: Time,
+        reliable: bool,
+        fixed_delay: Option<Time>,
+    ) -> Self {
         Event::new(
-            EventType::Broadcast(Broadcast::new_reliable(id_from, id_to, message)),
+            EventType::Broadcast(Broadcast::new_custom(
+                id_from, id_to, message, reliable, fixed_delay,
+            )),
             time,
         )
     }
@@ -101,7 +110,8 @@ pub struct Broadcast {
     pub id_from: u32,
     pub id_to: u32,
     pub message: Message,
-    pub can_omit: bool,
+    pub reliable: bool,
+    pub fixed_delay: Option<Time>,
 }
 impl Broadcast {
     pub fn new(id_from: u32, id_to: u32, message: Message) -> Self {
@@ -109,16 +119,24 @@ impl Broadcast {
             id_from,
             id_to,
             message,
-            can_omit: true,
+            reliable: false,
+            fixed_delay: None,
         }
     }
 
-    pub fn new_reliable(id_from: u32, id_to: u32, message: Message) -> Self {
+    pub fn new_custom(
+        id_from: u32,
+        id_to: u32,
+        message: Message,
+        reliable: bool,
+        fixed_delay: Option<Time>,
+    ) -> Self {
         Broadcast {
             id_from,
             id_to,
             message,
-            can_omit: false,
+            reliable,
+            fixed_delay,
         }
     }
 }
