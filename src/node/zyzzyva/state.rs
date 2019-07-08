@@ -61,6 +61,10 @@ impl LogEntry {
 pub struct State {
     id: u32,
     log: HashMap<u32, LogEntry>,
+    /// For garbage collection purposes we store here IDs of locally
+    /// commited requests. This allows us to remove the associated log entry and
+    /// ignore all subsequent incoming messages related to the request.
+    cl_reqs: HashSet<u32>,
     num_of_nodes: u32,
     current_view: u64,
     next_seq_num: u64,
@@ -94,6 +98,7 @@ impl State {
             num_of_nodes,
             current_view: 1,
             next_seq_num: 0,
+            cl_reqs: HashSet::new(),
             lc_seq_num: 0,
             role: match id {
                 1 => Role::Primary,
@@ -114,6 +119,12 @@ impl State {
         zyzzyva_message: ZyzzyvaMessage,
         time: Time,
     ) -> Option<Output> {
+        // we only process a message if we not already committed locally the
+        // associated request
+        if self.can_ignore_message(&zyzzyva_message) {
+            return None;
+        }
+
         match zyzzyva_message {
             ZyzzyvaMessage::ClientRequest(m) => self.handle_client_request(m, time),
             ZyzzyvaMessage::ClientTimeout(m) => self.handle_client_timeout(m, time),
@@ -121,6 +132,15 @@ impl State {
             ZyzzyvaMessage::SpeculativeResponse(m) => self.handle_speculative_response(m, time),
             ZyzzyvaMessage::Commit(m) => self.handle_commit(m, time),
             ZyzzyvaMessage::LocalCommit(m) => self.handle_local_commit(m, time),
+        }
+    }
+
+    fn can_ignore_message(&self, message: &ZyzzyvaMessage) -> bool {
+        match message {
+            ZyzzyvaMessage::LocalCommit(m) => self.cl_reqs.contains(&m.c_req.operation),
+            ZyzzyvaMessage::SpeculativeResponse(m) => self.cl_reqs.contains(&m.c_req.operation),
+            ZyzzyvaMessage::OrderRequest(m) => self.cl_reqs.contains(&m.c_req.operation),
+            _ => false,
         }
     }
 
@@ -135,62 +155,12 @@ impl State {
         self.next_seq_num
     }
 
-    /// This method is used when requiring a consistent history before executing
-    /// a order request. Zyzzyva relies on such behaviour, however, to allow for
-    /// a fair comparison between our PBFT we should not require such behaviour,
-    /// but instead, send out a speculative response or local commit message as
-    /// soon as we receive the corresponding request.
-    fn _process_history(&mut self, time: Time) -> Output {
-        let mut output = Output::new();
-
-        loop {
-            let lc_sn = self.lc_seq_num;
-            if let Some(entry) = self
-                .log
-                .values_mut()
-                .find(|entry| entry.seq_number == lc_sn + 1)
-            {
-                if entry.commit_certificate.len() >= self.quorum_size {
-                    entry.committed_local = true;
-                    log_result(
-                        time,
-                        Some(self.id),
-                        &format!("{};committed_local", entry.c_req.operation),
-                    );
-
-                    output.push((
-                        CLIENT_ID,
-                        ZyzzyvaMessage::LocalCommit(LocalCommit::new(
-                            entry.c_req,
-                            entry.view,
-                            entry.seq_number,
-                            self.id,
-                        )),
-                    ));
-                } else {
-                    entry.speculative_execution = true;
-                    log_result(
-                        time,
-                        Some(self.id),
-                        &format!("{};speculative_commit", entry.c_req.operation),
-                    );
-                    output.push((
-                        CLIENT_ID,
-                        ZyzzyvaMessage::SpeculativeResponse(SpeculativeResponse::new(
-                            entry.c_req,
-                            entry.view,
-                            entry.seq_number,
-                            self.id,
-                        )),
-                    ));
-                }
-
-                self.lc_seq_num += 1;
-                continue;
-            }
-            break;
-        }
-        output
+    fn gc_entry(&mut self, req_id: u32) {
+        // we don't need the entry anymore. Therefore, remove it from the log
+        self.log.remove(&req_id);
+        // update the committed local set so we ignore subsequent incoming messages
+        // related to this request
+        self.cl_reqs.insert(req_id);
     }
 
     fn handle_local_commit(&mut self, msg_in: LocalCommit, time: Time) -> Option<Output> {
@@ -204,7 +174,9 @@ impl State {
                         Some(self.id),
                         &format!("{};completed", msg_in.c_req.operation),
                     );
-                    entry.completed = true;
+                    // entry.completed = true;
+                    let id = entry.c_req.operation;
+                    self.gc_entry(id);
                 }
             }
             None => panic!(
@@ -273,7 +245,6 @@ impl State {
                 let mut entry = LogEntry::new(msg_in, self.current_view, seq_number);
                 let mut output = Output::with_capacity(self.peers.len() + 1);
 
-                // if our history is complete, we can speculatively execute the request
                 log_result(
                     time,
                     Some(self.id),
@@ -313,7 +284,8 @@ impl State {
         match self.role {
             Role::Backup => match self.log.get(&msg_in.c_req.operation) {
                 Some(_) => panic!(
-                    "Received a subsequent OrderRequest for the same operation. {:?}",
+                    "Received a OrderRequest for operation {} although there is already an entry. {:?}",
+                    msg_in.c_req.operation,
                     msg_in
                 ),
                 None => {
@@ -358,7 +330,7 @@ impl State {
             Role::Client => {
                 match self.log.get_mut(&msg_in.c_req.operation) {
                     Some(entry) => {
-                        // in case we timed-out we only acced commit messages
+                        // in case we timed-out we only accept commit messages
                         // for the associated request
                         if entry.timed_out {
                             return None;
@@ -382,7 +354,10 @@ impl State {
                                 Some(self.id),
                                 &format!("{};completed", msg_in.c_req.operation),
                             );
-                            entry.completed = true;
+                            // entry.completed = true;
+
+                            let req_id = entry.c_req.operation;
+                            self.gc_entry(req_id);
                         }
                     }
                     None => {
@@ -417,7 +392,7 @@ impl State {
                             self.id,
                         )),
                     ));
-
+                    self.gc_entry(msg_in.req_id);
                     return Some(output);
                 } else {
                     let spec_res = msg_in.certificate[0];
@@ -444,7 +419,9 @@ impl State {
                         )),
                     ));
 
-                    self.log.insert(msg_in.req_id, entry);
+                    // self.log.insert(msg_in.req_id, entry);
+                    let req_id = msg_in.req_id;
+                    self.gc_entry(req_id);
 
                     return Some(output);
                 }
@@ -456,5 +433,63 @@ impl State {
                 // };
             }
         }
+    }
+
+    /// This method is used when requiring a consistent history before executing
+    /// a order request. Zyzzyva relies on such behaviour, however, to allow for
+    /// a fair comparison between our PBFT we should not require such behaviour,
+    /// but instead, send out a speculative response or local commit message as
+    /// soon as we receive the corresponding request.
+    fn _process_history(&mut self, time: Time) -> Output {
+        let mut output = Output::new();
+
+        loop {
+            let lc_sn = self.lc_seq_num;
+            if let Some(entry) = self
+                .log
+                .values_mut()
+                .find(|entry| entry.seq_number == lc_sn + 1)
+            {
+                if entry.commit_certificate.len() >= self.quorum_size {
+                    entry.committed_local = true;
+                    log_result(
+                        time,
+                        Some(self.id),
+                        &format!("{};committed_local", entry.c_req.operation),
+                    );
+
+                    output.push((
+                        CLIENT_ID,
+                        ZyzzyvaMessage::LocalCommit(LocalCommit::new(
+                            entry.c_req,
+                            entry.view,
+                            entry.seq_number,
+                            self.id,
+                        )),
+                    ));
+                } else {
+                    entry.speculative_execution = true;
+                    log_result(
+                        time,
+                        Some(self.id),
+                        &format!("{};speculative_commit", entry.c_req.operation),
+                    );
+                    output.push((
+                        CLIENT_ID,
+                        ZyzzyvaMessage::SpeculativeResponse(SpeculativeResponse::new(
+                            entry.c_req,
+                            entry.view,
+                            entry.seq_number,
+                            self.id,
+                        )),
+                    ));
+                }
+
+                self.lc_seq_num += 1;
+                continue;
+            }
+            break;
+        }
+        output
     }
 }
