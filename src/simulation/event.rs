@@ -5,6 +5,7 @@ Everything related to events.
 use std::cmp::Ordering;
 
 use crate::node::pbft::messages::PBFTMessage;
+use crate::node::zyzzyva::messages::ZyzzyvaMessage;
 use crate::simulation::config::RequestBatchConfig;
 use crate::simulation::time::Time;
 
@@ -21,6 +22,7 @@ pub enum EventType {
     Network,
     Broadcast(Broadcast),
     Reception(Reception),
+    Timeout(Timeout),
 }
 
 // An event abstraction, contains the time of the event and the event_type
@@ -65,9 +67,30 @@ impl Event {
         )
     }
 
+    /// To generate a new broadcast with custom parameters
+    pub fn new_broadcast_custom(
+        id_from: u32,
+        id_to: u32,
+        message: Message,
+        time: Time,
+        reliable: bool,
+        fixed_delay: Option<Time>,
+    ) -> Self {
+        Event::new(
+            EventType::Broadcast(Broadcast::new_custom(
+                id_from, id_to, message, reliable, fixed_delay,
+            )),
+            time,
+        )
+    }
+
     /// To generate a new reception event
     pub fn new_reception(id: u32, message: Message, time: Time) -> Self {
         Event::new(EventType::Reception(Reception::new(id, message)), time)
+    }
+
+    pub fn new_timeout(c_id: u32, message: Message, time: Time) -> Self {
+        Event::new(EventType::Timeout(Timeout::new(c_id, message)), time)
     }
 }
 
@@ -87,6 +110,8 @@ pub struct Broadcast {
     pub id_from: u32,
     pub id_to: u32,
     pub message: Message,
+    pub reliable: bool,
+    pub fixed_delay: Option<Time>,
 }
 impl Broadcast {
     pub fn new(id_from: u32, id_to: u32, message: Message) -> Self {
@@ -94,6 +119,24 @@ impl Broadcast {
             id_from,
             id_to,
             message,
+            reliable: false,
+            fixed_delay: None,
+        }
+    }
+
+    pub fn new_custom(
+        id_from: u32,
+        id_to: u32,
+        message: Message,
+        reliable: bool,
+        fixed_delay: Option<Time>,
+    ) -> Self {
+        Broadcast {
+            id_from,
+            id_to,
+            message,
+            reliable,
+            fixed_delay,
         }
     }
 }
@@ -110,9 +153,22 @@ impl Reception {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Timeout {
+    pub c_id: u32,
+    pub message: Message,
+}
+impl Timeout {
+    pub fn new(c_id: u32, message: Message) -> Self {
+        Timeout { c_id, message }
+    }
+}
+
 /// Message abstraction
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Message {
     Dummy,
-    PBFT(PBFTMessage), //Zyzzyva(ZyzzyvaMessage), RBFT(RBFTMessage),
+    PBFT(PBFTMessage),
+    Zyzzyva(ZyzzyvaMessage),
+    //RBFT(RBFTMessage),
 }

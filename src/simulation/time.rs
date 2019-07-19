@@ -28,6 +28,10 @@ impl Time {
             milli_seconds: self.milli_seconds - milli,
         }
     }
+
+    pub fn milli(&self) -> u64 {
+        self.milli_seconds
+    }
 }
 
 impl Sub for Time {

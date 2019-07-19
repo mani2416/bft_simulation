@@ -1,41 +1,47 @@
-/// Type defining (currently) possible _PBFT messages_ that can be send by
-/// replicas or clients.
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
-pub enum PBFTMessage {
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
+pub enum ZyzzyvaMessage {
     ClientRequest(ClientRequest),
-    ClientResponse(ClientResponse),
-    PrePrepare(PrePrepareMessage),
-    Prepare(PrepareMessage),
-    Commit(CommitMessage),
+    ClientTimeout(ClientTimeout),
+    OrderRequest(OrderRequest),
+    SpeculativeResponse(SpeculativeResponse),
+    Commit(Commit),
+    LocalCommit(LocalCommit),
 }
 
-/// Type defining a _client request_.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+pub struct ClientTimeout {
+    pub req_id: u32,
+}
+impl ClientTimeout {
+    pub fn new(req_id: u32) -> Self {
+        ClientTimeout { req_id }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 pub struct ClientRequest {
     pub operation: u32,
     pub sender_id: u32,
 }
-
-/// Type defining a _client response_ message send by replicas after successfully
-/// committing locally.
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
-pub struct ClientResponse {
-    pub result: u32,
-    pub sender_id: u32,
+impl ClientRequest {
+    pub fn new(operation: u32, sender_id: u32) -> Self {
+        ClientRequest {
+            operation,
+            sender_id,
+        }
+    }
 }
 
-/// Type defining a _Pre-Prepare_ message send by the _primary_.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
-pub struct PrePrepareMessage {
+pub struct OrderRequest {
     pub c_req: ClientRequest,
     pub view: u64,
     pub seq_number: u64,
     pub sender_id: u32,
 }
-
-impl PrePrepareMessage {
+impl OrderRequest {
     pub fn new(c_req: ClientRequest, view: u64, seq_number: u64, sender_id: u32) -> Self {
-        PrePrepareMessage {
+        OrderRequest {
             c_req,
             view,
             seq_number,
@@ -44,18 +50,16 @@ impl PrePrepareMessage {
     }
 }
 
-/// Type defining a _Prepare_ message send by _backups_.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
-pub struct PrepareMessage {
+pub struct SpeculativeResponse {
     pub c_req: ClientRequest,
     pub view: u64,
     pub seq_number: u64,
     pub sender_id: u32,
 }
-
-impl PrepareMessage {
+impl SpeculativeResponse {
     pub fn new(c_req: ClientRequest, view: u64, seq_number: u64, sender_id: u32) -> Self {
-        PrepareMessage {
+        SpeculativeResponse {
             c_req,
             view,
             seq_number,
@@ -64,18 +68,32 @@ impl PrepareMessage {
     }
 }
 
-/// Type defining a _Commit_ message send by the _primary_ and _backups_.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
+pub struct Commit {
+    pub req_id: u32,
+    pub certificate: Vec<SpeculativeResponse>,
+    pub sender_id: u32,
+}
+impl Commit {
+    pub fn new(req_id: u32, certificate: Vec<SpeculativeResponse>, sender_id: u32) -> Self {
+        Commit {
+            req_id,
+            certificate,
+            sender_id,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
-pub struct CommitMessage {
+pub struct LocalCommit {
     pub c_req: ClientRequest,
     pub view: u64,
     pub seq_number: u64,
     pub sender_id: u32,
 }
-
-impl CommitMessage {
+impl LocalCommit {
     pub fn new(c_req: ClientRequest, view: u64, seq_number: u64, sender_id: u32) -> Self {
-        CommitMessage {
+        LocalCommit {
             c_req,
             view,
             seq_number,

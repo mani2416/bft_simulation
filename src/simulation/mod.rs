@@ -8,6 +8,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use log::{debug, info, warn};
+use mc_utils::ini::env2var;
 
 use config::SimulationConfig;
 use event::{AdminType, Event, EventType};
@@ -131,6 +132,14 @@ impl Simulation {
                         if let Some(r) = self.network.handle_broadcast(self.time, b) {
                             self.add_event_to_queue(r);
                         }
+                    }
+                    EventType::Timeout(t) => {
+                        self.update_time(event.time);
+                        let timeout = env2var::<u64>("node.client_timeout");
+                        let time = self.time.add_milli(timeout);
+                        let event = Event::new_reception(t.c_id, t.message, time);
+
+                        self.add_event_to_queue(event);
                     }
                 }
             } else {

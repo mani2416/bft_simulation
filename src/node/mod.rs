@@ -2,13 +2,14 @@ use std::fmt::Debug;
 
 use log::debug;
 
-use crate::node::pbft::state::ReplicaState;
+use crate::node::pbft::state::ReplicaState as PBFTState;
+use crate::node::zyzzyva::state::State as ZyzzyvaState;
 use crate::simulation::config::NodeConfig;
 use crate::simulation::event::{Event, Message, Reception};
 use crate::simulation::time::Time;
 
 pub mod pbft;
-
+pub mod zyzzyva;
 /***************************************************************************************************
 Contains everything related to nodes.
 The 'Node' trait must be implemented for all nodes that shall participate in the simulation. Currently, the only required function to implement is 'handle_event'.
@@ -33,7 +34,8 @@ pub fn build_node(config: NodeConfig) -> Box<dyn Node> {
     match &config.node_type {
         NodeType::Dummy => Box::new(DummyNode::new(config)),
         NodeType::PBFT => Box::new(PBFTNode::new(config)),
-        _ => panic!("Only 'dummy' and 'PBFT' nodes are currently implemented!"),
+        NodeType::Zyzzyva => Box::new(ZyzzyvaNode::new(config)),
+        _ => panic!("Only 'dummy', 'PBFT' and 'Zyzzyva' nodes are currently implemented!"),
     }
 }
 
@@ -84,10 +86,9 @@ impl Node for DummyNode {
     }
 }
 
-/***************************************************************************************************
-PBFT node
-Your main playground, i guess
-***************************************************************************************************/
+/*******************************************************************************
+ * PBFT node
+ ******************************************************************************/
 
 /// The `PBFTNode` acts as a host for a single replica. It holds the `ReplicaState`
 /// required for the participation in a PBFT cluster.
@@ -96,7 +97,7 @@ pub struct PBFTNode {
     // id of the node
     id: u32,
     /// holds the state required to take part in a PBFT cluster.
-    state: ReplicaState,
+    state: PBFTState,
 }
 
 impl PBFTNode {
@@ -104,7 +105,7 @@ impl PBFTNode {
     /// The `ReplicaState` contains the state required for the PBFT operation.
     pub fn new(config: NodeConfig) -> Self {
         PBFTNode {
-            state: ReplicaState::new(config.id, config.number_of_nodes),
+            state: PBFTState::new(config.id, config.number_of_nodes),
             id: config.id,
         }
     }
@@ -135,6 +136,83 @@ impl Node for PBFTNode {
             }
             _ => {
                 panic!("Received a non pbft message for a pbft node!");
+            }
+        }
+    }
+}
+
+/*******************************************************************************
+ * Zyzzyva node
+ ******************************************************************************/
+
+/// The `PBFTNode` acts as a host for a single replica. It holds the `ReplicaState`
+/// required for the participation in a PBFT cluster.
+#[derive(Debug)]
+pub struct ZyzzyvaNode {
+    // id of the node
+    id: u32,
+    /// holds the state required to take part in a PBFT cluster.
+    state: ZyzzyvaState,
+}
+
+impl ZyzzyvaNode {
+    /// Creates a new `PBFTNode` by initializing the `ReplicaState`.
+    /// The `ReplicaState` contains the state required for the PBFT operation.
+    pub fn new(config: NodeConfig) -> Self {
+        ZyzzyvaNode {
+            state: ZyzzyvaState::new(config.id, config.number_of_nodes),
+            id: config.id,
+        }
+    }
+}
+
+impl Node for ZyzzyvaNode {
+    fn handle_event(&mut self, reception: Reception, time: Time) -> Option<Vec<Event>> {
+        debug!(target: "node", "Zyzzyva {} is processing a reception at {}ms: {:?}", self.id, time.to_string(), &reception);
+
+        match reception.message {
+            Message::Zyzzyva(zyzzyva_message) => {
+                if let Some(out_events) = self.state.handle_message(zyzzyva_message, time) {
+                    let mut events = Vec::<Event>::with_capacity(out_events.len());
+
+                    for (recv_id, msg) in out_events {
+                        match msg {
+                            zyzzyva::messages::ZyzzyvaMessage::ClientTimeout(_) => {
+                                events.push(Event::new_timeout(
+                                    recv_id,
+                                    Message::Zyzzyva(msg),
+                                    time,
+                                ));
+                            }
+                            zyzzyva::messages::ZyzzyvaMessage::ClientRequest(_) => {
+                                events.push(Event::new_broadcast_custom(
+                                    self.id,
+                                    recv_id,
+                                    Message::Zyzzyva(msg),
+                                    // TODO: provide a more realistic value
+                                    time.add_milli(5),
+                                    true,
+                                    Some(Time::new(0)),
+                                ));
+                            }
+                            _ => {
+                                events.push(Event::new_broadcast(
+                                    self.id,
+                                    recv_id,
+                                    Message::Zyzzyva(msg),
+                                    // TODO: provide a more realistic value
+                                    time.add_milli(5),
+                                ));
+                            }
+                        }
+                    }
+
+                    return Some(events);
+                }
+                None
+            }
+            _ => {
+                panic!("Received a non node.pbft message for a node.pbft node!");
             }
         }
     }

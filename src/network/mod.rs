@@ -30,19 +30,26 @@ impl Network {
 
     /// Handles broadcasts on the network
     pub fn handle_broadcast(&mut self, time: Time, broadcast: Broadcast) -> Option<Event> {
-
         // apply the omission probability
-        if self.omission_prob > 0.0 && self.my_rng.gen::<f64>() <= self.omission_prob {
+        if !broadcast.reliable
+            && self.omission_prob > 0.0
+            && self.my_rng.gen::<f64>() <= self.omission_prob
+        {
             debug!(target: "simulation", "Message is omitted: {:?}", &broadcast);
             return None;
         }
 
         // set the delay to random value between the min and max value
-        let delay = if self.delay_min == self.delay_max {
-            u64::from(self.delay_min)
-        } else {
-            self.my_rng
-                .gen_range(u64::from(self.delay_min), u64::from(self.delay_max))
+        let delay = match broadcast.fixed_delay {
+            Some(t) => t.milli(),
+            None => {
+                if self.delay_min == self.delay_max {
+                    u64::from(self.delay_min)
+                } else {
+                    self.my_rng
+                        .gen_range(u64::from(self.delay_min), u64::from(self.delay_max))
+                }
+            }
         };
 
         // Create the respective reception event

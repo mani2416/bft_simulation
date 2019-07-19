@@ -11,7 +11,11 @@ use log4rs::encode::pattern::PatternEncoder;
 use mc_utils::ini::env2var;
 
 use crate::node::NodeType;
-use crate::node::pbft::messages::{ClientRequest, PBFTMessage};
+use crate::node::pbft::messages::{ClientRequest as PBFTCR, PBFTMessage};
+use crate::node::zyzzyva::{
+    messages::{ClientRequest as ZyzzyvaCR, ZyzzyvaMessage},
+    state::CLIENT_ID,
+};
 use crate::simulation::event::{Event, Message};
 use crate::simulation::time::Time;
 
@@ -98,13 +102,21 @@ impl RequestBatchConfig {
             match node_type {
                 NodeType::PBFT => {
                     // the message containing the client request
-                    let message = Message::PBFT(PBFTMessage::ClientRequest(ClientRequest {
+                    let message = Message::PBFT(PBFTMessage::ClientRequest(PBFTCR {
                         sender_id: 31415,
                         operation: (*request_id_counter as u32),
                     }));
                     //TODO Client requests will go to node '1' by default, add option to define receiver in RequestConfig?
                     let new_time = time.add_milli(u64::from((counter - 1) * self.interval));
                     result.push(Event::new_reception(1, message, new_time));
+                }
+                NodeType::Zyzzyva => {
+                    let message = Message::Zyzzyva(ZyzzyvaMessage::ClientRequest(ZyzzyvaCR {
+                        sender_id: 0,
+                        operation: (*request_id_counter as u32),
+                    }));
+                    let new_time = time.add_milli(u64::from((counter - 1) * self.interval));
+                    result.push(Event::new_reception(CLIENT_ID, message, new_time));
                 }
                 _ => panic!(
                     "Received client requests for node type {:?}, which is not implemented yet",
@@ -139,6 +151,7 @@ pub fn initialize_ini() {
     let ini = mc_utils::ini::get_ini("simulation.ini");
     mc_utils::ini::ini2env("node", "node_type", &ini, None);
     mc_utils::ini::ini2env("node", "nodes_vec", &ini, None);
+    mc_utils::ini::ini2env("node", "client_timeout", &ini, None);
     mc_utils::ini::ini2env("simulation", "requests", &ini, None);
     mc_utils::ini::ini2env("log", "debug", &ini, None);
     mc_utils::ini::ini2env("log", "result", &ini, None);
