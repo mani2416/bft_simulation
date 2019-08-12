@@ -1,0 +1,9 @@
+[package]
+name = "bftsmart_coordinator"
+version = "0.1.0"
+authors = ["Martin Nischwitz <martin.nischwitz@ptb.de>"]
+edition = "2018"
+
+[dependencies]
+getopts = "^0.2"
+log = "^0.4.6"
